@@ -26,8 +26,8 @@ usage() {
     echo "   4. Ctags"
     echo "   5. Chipyard pre-compile sources"
     echo "   6. FireSim"
-    echo "   9. FireMarshal pre-compile default buildroot Linux sources"
-    echo "  10. Runs repository clean-up"
+    echo "   7. FireMarshal pre-compile default buildroot Linux sources"
+    echo "   8. Runs repository clean-up"
     echo ""
     echo "**See below for options to skip parts of the setup. Skipping parts of the setup is not guaranteed to be tested/working.**"
     echo ""
@@ -186,7 +186,7 @@ if run_step "6"; then
 fi
 
 # do misc. cleanup for a "clean" git status
-if run_step "10"; then
+if run_step "8"; then
     $CYDIR/scripts/repo-clean.sh
 fi
 
