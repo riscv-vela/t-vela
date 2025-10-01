@@ -32,12 +32,12 @@ source env.sh
 
 ## T-Vela Installation
 
-T-Vela is located in generator/npu-mlir and requires an LLVM dependency.
+T-Vela is located in toolchains/mlir-tools and requires an LLVM dependency.
 
 - Build and Test LLVM/MLIR/CLANG
 
 ```bash
-cd generator/npu-mlir
+cd toolchains/mlir-tools
 mkdir llvm/build
 cd llvm/build
 cmake -G Ninja ../llvm \
@@ -48,12 +48,12 @@ cmake -G Ninja ../llvm \
 ninja check-mlir check-clang
 ```
 
-- Build npu-mlir
+- Build mlir-tools
 
 If you have previously built the llvm-project, you can replace the $PWD with the path to the directory where you have successfully built the llvm-project.
 
 ```bash
-cd generator/npu-mlir
+cd toolchains/mlir-tools
 mkdir build
 cd build
 cmake -G Ninja .. \
