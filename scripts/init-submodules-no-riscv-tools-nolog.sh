@@ -139,6 +139,9 @@ cd "$RDIR"
 
     # Only shallow clone needed for basic SW tests
     git submodule update --init software/firemarshal
+
+    # MLIR-Toolchain submodule
+    git submodule update --init --recursive toolchains/mlir-tools/llvm
 )
 
 # Configure firemarshal to know where our firesim installation is
