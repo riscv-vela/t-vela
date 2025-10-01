@@ -121,6 +121,6 @@
 [submodule "tools/cde"]
 	path = tools/cde
 	url = https://github.com/chipsalliance/cde.git
-[submodule "generators/npu-mlir"]
-	path = generators/npu-mlir
-	url = https://github.com/dudgus1727/npu-mlir.git
+[submodule "toolchains/mlir-tools/llvm"]
+	path = toolchains/mlir-tools/llvm
+	url = https://github.com/llvm/llvm-project.git
