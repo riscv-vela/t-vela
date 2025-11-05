@@ -66,9 +66,20 @@ ninja
 
 ## Example and Results
 
+Executing the following command will lower conv_2d_nhwc_hwcf_i8.mlir to generate log.mlir.
+```bash
+cd toolchains/mlir-tools/example
+make gemmini-linalg-conv2d-nhwc-hwcf-i8-lower
+```
 - The figure below shows the lowering results for each dialect in MLIR.
 - (a) shows the result of the LinAlg dialect, (b) shows the high-level lowering result for the target AI engine, and (c) shows the low-level lowering result for the target AI engine.
 ![Lowering Results](figures/Lowering_results.png)
+
+The following command simulates with spike after compilation is complete.
+```bash
+cd toolchains/mlir-tools/example
+make gemmini-linalg-conv2d-nhwc-hwcf-i8-run
+```
 
 ## Development Status
 
