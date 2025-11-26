@@ -9,7 +9,7 @@ Through MLIR-based IR transformation and optimization, models are converted into
 
 ## Dependencies
 
-### Installing Conda and Chipyard
+### Installing Conda[1] and Chipyard[2]
 
 T-Vela is built on top of the Chipyard project for the verification environment.
 Installing Chipyard is required for verification.
@@ -73,7 +73,7 @@ cd toolchains/mlir-tools/example
 make gemmini-linalg-conv2d-nhwc-hwcf-i8-lower
 ```
 
-The following command simulates with spike after compilation is complete.
+The following command simulates with spike[3] after compilation is complete.
 
 ```bash
 cd toolchains/mlir-tools/example
@@ -95,3 +95,12 @@ The figure above shows the step-by-step lowering results for each dialect in MLI
 - Development of mapping functionality for machine learning models based on general-purpose ML frameworks
 - Application of step-by-step dialect lowering and IR-level optimizations for AI models using MLIR
 - Development of optimization passes considering hardware resources of the target AI engine
+
+## Reference
+
+[1] [Conda](https://docs.conda.io/projects/conda/en/stable/user-guide/install/index.html)
+
+[2] [Chipyard](https://github.com/ucb-bar/chipyard)
+
+[3] [Spike](https://chipyard.readthedocs.io/en/stable/Software/Spike.html)
+
