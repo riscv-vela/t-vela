@@ -104,3 +104,6 @@ The figure above shows the step-by-step lowering results for each dialect in MLI
 
 [3] [Spike](https://chipyard.readthedocs.io/en/stable/Software/Spike.html)
 
+## License
+
+- The license points to the Chipyard and SiFive licenses.
