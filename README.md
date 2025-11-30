@@ -90,6 +90,54 @@ The figure above shows the step-by-step lowering results for each dialect in MLI
 - (b) High-level lowering result for the target AI engine
 - (c) Low-level lowering result for the target AI engine
 
+## MLIR-Toolchain Directory Structure
+
+```text
+toolchains/mlir-tools/
+           ├── backend
+           ├── cmake
+           ├── example
+           │   ├── makefile
+           │   ├── tile-matmul.mlir
+           │   └── ...
+           ├── midend
+           │   ├── include
+           │   │   ├── Dialect
+           │   │   │   └── Gemmini
+           │   │   │       ├── Gemmini.td
+           │   │   │       ├── GemminiDialect.h
+           │   │   │       ├── GemminiOps.h
+           │   │   │       └── Transform.h
+           │   │   └── Target
+           │   │       └── LLVMIR
+           │   │           └── Dialect
+           │   │               └── Gemmini
+           │   │                   └── GemminiToLLVMIRTranslation.h
+           │   └── lib
+           │       ├── Conversion
+           │       │   ├── LowerGemmini
+           │       │   │   └── LowerGemminiPass.cpp
+           │       │   └── LowerLinalgToGemmini
+           │       │       └── LowerLinalgToGemmini.cpp
+           │       ├── Dialect
+           │       │   └── Gemmini
+           │       │       ├── IR
+           │       │       │   └── GemminiDialect.cpp
+           │       │       └── Transforms
+           │       │           └── LegalizeForLLVMExport.cpp
+           │       └── Target
+           │           └── LLVMIR
+           │               ├── ConvertnpuToLLVMIR.cpp
+           │               └── Dialect
+           │                   └── Gemmini
+           │                       └── GemminiToLLVMIRTranslation.cpp
+           └── tools
+               ├── npu-opt
+               │   └── npu-opt.cpp
+               └── npu-translate
+                   └── npu-translate.cpp
+```
+
 ## Development Status
 
 - Development of mapping functionality for machine learning models based on general-purpose ML frameworks
@@ -107,3 +155,4 @@ The figure above shows the step-by-step lowering results for each dialect in MLI
 ## License
 
 - The license points to the Chipyard and SiFive licenses.
+
