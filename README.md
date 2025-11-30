@@ -100,43 +100,62 @@ toolchains/mlir-tools/
            │   ├── makefile
            │   ├── tile-matmul.mlir
            │   └── ...
-           ├── midend
-           │   ├── include
-           │   │   ├── Dialect
-           │   │   │   └── Gemmini
-           │   │   │       ├── Gemmini.td
-           │   │   │       ├── GemminiDialect.h
-           │   │   │       ├── GemminiOps.h
-           │   │   │       └── Transform.h
-           │   │   └── Target
-           │   │       └── LLVMIR
-           │   │           └── Dialect
-           │   │               └── Gemmini
-           │   │                   └── GemminiToLLVMIRTranslation.h
-           │   └── lib
-           │       ├── Conversion
-           │       │   ├── LowerGemmini
-           │       │   │   └── LowerGemminiPass.cpp
-           │       │   └── LowerLinalgToGemmini
-           │       │       └── LowerLinalgToGemmini.cpp
-           │       ├── Dialect
-           │       │   └── Gemmini
-           │       │       ├── IR
-           │       │       │   └── GemminiDialect.cpp
-           │       │       └── Transforms
-           │       │           └── LegalizeForLLVMExport.cpp
-           │       └── Target
-           │           └── LLVMIR
-           │               ├── ConvertnpuToLLVMIR.cpp
-           │               └── Dialect
-           │                   └── Gemmini
-           │                       └── GemminiToLLVMIRTranslation.cpp
-           └── tools
-               ├── npu-opt
-               │   └── npu-opt.cpp
-               └── npu-translate
-                   └── npu-translate.cpp
+           └── midend
+               ├── include
+               │   ├── Dialect
+               │   │   └── Gemmini
+               │   │       ├── Gemmini.td
+               │   │       ├── GemminiDialect.h
+               │   │       ├── GemminiOps.h
+               │   │       └── Transform.h
+               └── lib
+                   ├── Conversion
+                   │   ├── LowerGemmini
+                   │   │   └── LowerGemminiPass.cpp
+                   │   └── LowerLinalgToGemmini
+                   │       └── LowerLinalgToGemmini.cpp
+                   └── Dialect
+                       └── Gemmini
+                           ├── IR
+                           │   └── GemminiDialect.cpp
+                           └── Transforms
+                               └── LegalizeForLLVMExport.cpp
 ```
+
+## MLIR-Toolchain Optimization Pass Details
+
+This Toolchain contains the MLIR midend implementation for optimizing and lowering operations to the RISC-V Gemmini accelerator.
+
+### Overview
+
+Gemmini is a systolic array-based accelerator designed for matrix multiplication and convolution operations. This midend provides:
+
+1. **Gemmini Dialect**: A custom MLIR dialect that represents Gemmini-specific operations
+2. **Linalg to Gemmini Conversion**: Transforms high-level Linalg operations (matmul, conv2d, etc.) into Gemmini dialect operations
+3. **Gemmini to LLVM IR Lowering**: Converts Gemmini dialect operations to LLVM IR with Gemmini intrinsics
+
+### Key Components
+
+#### Dialect Definition (`include/Dialect/Gemmini/`)
+
+- Defines Gemmini operations such as:
+  - `TileMatMulOp`: Matrix multiplication operations
+  - `TileConvOp`: Convolution operations
+  - `config_ld`, `config_st`, `config_ex`: Configuration operations
+  - `mvin`, `mvout`: Memory operations
+
+#### Conversion Passes (`lib/Conversion/`)
+
+##### LowerLinalgToGemmini
+
+Converts Linalg dialect operations to Gemmini dialect:
+
+- **Matmul**: Converts `linalg.matmul` to `gemmini.tile_matmul`
+- **Conv2D**: Converts `linalg.conv_2d_nchw_fchw` and `linalg.conv_2d_nhwc_hwcf` to `gemmini.tile_conv`
+
+##### LowerGemmini
+
+Lowers Gemmini dialect operations to LLVM IR with Gemmini intrinsics, generating code that can target the Gemmini hardware accelerator.
 
 ## Development Status
 
@@ -155,4 +174,3 @@ toolchains/mlir-tools/
 ## License
 
 - The license points to the Chipyard and SiFive licenses.
-
