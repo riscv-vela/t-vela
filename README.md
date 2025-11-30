@@ -133,10 +133,11 @@ Gemmini is a systolic array-based accelerator designed for matrix multiplication
 1. **Gemmini Dialect**: A custom MLIR dialect that represents Gemmini-specific operations
 2. **Linalg to Gemmini Conversion**: Transforms high-level Linalg operations (matmul, conv2d, etc.) into Gemmini dialect operations
 3. **Gemmini to LLVM IR Lowering**: Converts Gemmini dialect operations to LLVM IR with Gemmini intrinsics
+4. **Gemmini Optimization**: Applies optimizations tailored to Gemmini’s hardware constraints
 
 ### Key Components
 
-#### Dialect Definition (`include/Dialect/Gemmini/`)
+#### 1. Dialect Definition (`include/Dialect/Gemmini/`)
 
 - Defines Gemmini operations such as:
   - `TileMatMulOp`: Matrix multiplication operations
@@ -146,16 +147,20 @@ Gemmini is a systolic array-based accelerator designed for matrix multiplication
 
 #### Conversion Passes (`lib/Conversion/`)
 
-##### LowerLinalgToGemmini
+##### 2. LowerLinalgToGemmini
 
 Converts Linalg dialect operations to Gemmini dialect:
 
 - **Matmul**: Converts `linalg.matmul` to `gemmini.tile_matmul`
 - **Conv2D**: Converts `linalg.conv_2d_nchw_fchw` and `linalg.conv_2d_nhwc_hwcf` to `gemmini.tile_conv`
 
-##### LowerGemmini
+##### 3. LowerGemmini
 
 Lowers Gemmini dialect operations to LLVM IR with Gemmini intrinsics, generating code that can target the Gemmini hardware accelerator.
+
+#### 4. LegalizeForLLVMExport (`lib/Dialect/Gemmini/Transforms/`)
+
+The `LegalizeForLLVMExport.cpp` file contains optimization functions for lowering Gemmini dialect operations to LLVM IR. This pass performs hardware-aware optimization by considering Gemmini’s systolic array dimensions and scratchpad capacity to automatically select valid tile sizes for efficient code generation.
 
 ## Development Status
 
