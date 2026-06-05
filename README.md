@@ -80,6 +80,14 @@ cd toolchains/mlir-tools/example
 make gemmini-linalg-conv2d-nhwc-hwcf-i8-compile
 ```
 
+This compile target invokes the Gemmini lowering pass with explicit hardware parameters:
+
+```bash
+-lower-gemmini="dim=4 addr_len=32 acc_rows=1024 bank_rows=4096 elem_t=i8 acc_t=i32"
+```
+
+These parameters describe the target Gemmini configuration used by the MLIR lowering pipeline. In particular, `dim` controls the systolic array dimension, `acc_rows` and `bank_rows` describe accumulator and scratchpad capacity, and `elem_t`/`acc_t` describe the element and accumulator data types. If these options are omitted, `lower-gemmini` falls back to the defaults defined in `LowerGemminiPass.cpp`.
+
 The following command compiles the binary if needed and simulates it with spike[3].
 
 ```bash
