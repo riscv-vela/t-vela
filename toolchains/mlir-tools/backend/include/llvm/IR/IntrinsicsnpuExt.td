@@ -14,11 +14,11 @@
 //
 //===----------------------------------------------------------------------===//
 // 
-// This is the top file for intrinsic definition of RISC-V buddy extension.
+// This is the top file for intrinsic definition of RISC-V npu extension.
 //
 //===----------------------------------------------------------------------===//
 
 // Include upstream intrinsic tablegen file.
 include "Intrinsics.td"
-// Include buddy extension intrinsic tablegen file.
+// Include npu extension intrinsic tablegen file.
 include "IntrinsicsRISCVnpuExt.td"
