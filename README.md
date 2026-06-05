@@ -45,7 +45,7 @@ cmake -G Ninja ../llvm \
     -DLLVM_TARGETS_TO_BUILD="host;RISCV" \
     -DLLVM_ENABLE_ASSERTIONS=ON \
     -DCMAKE_BUILD_TYPE=RELEASE
-ninja check-mlir check-clang
+ninja check-mlir
 ```
 
 - Build mlir-tools
@@ -73,7 +73,14 @@ cd toolchains/mlir-tools/example
 make gemmini-linalg-conv2d-nhwc-hwcf-i8-lower
 ```
 
-The following command simulates with spike[3] after compilation is complete.
+The following command compiles the lowered program to generate a binary.
+
+```bash
+cd toolchains/mlir-tools/example
+make gemmini-linalg-conv2d-nhwc-hwcf-i8-compile
+```
+
+The following command compiles the binary if needed and simulates it with spike[3].
 
 ```bash
 cd toolchains/mlir-tools/example
