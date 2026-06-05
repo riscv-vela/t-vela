@@ -672,7 +672,7 @@ gemmini-linalg-conv2d-nhwc-hwcf-i8-asm:
 		-mattr=+npuext,+D -float-abi=hard \
 		-o log.s
 
-gemmini-linalg-conv2d-nhwc-hwcf-i8-run:
+gemmini-linalg-conv2d-nhwc-hwcf-i8-compile:
 	@${npu_OPT} ./conv_2d_nhwc_hwcf_i8.mlir \
 		-convert-linalg-to-gemmini \
 		-convert-linalg-to-loops \
@@ -682,6 +682,8 @@ gemmini-linalg-conv2d-nhwc-hwcf-i8-run:
 		-mattr=+npuext,+D -float-abi=hard \
 		-o log.o
 	@riscv64-unknown-linux-gnu-gcc log.o -O2 -static -o a.out
+
+gemmini-linalg-conv2d-nhwc-hwcf-i8-run: gemmini-linalg-conv2d-nhwc-hwcf-i8-compile
 	@spike --extension=gemmini pk a.out
 
 gemmini-linalg-conv2d-nhwc-hwcf-f32-lower:
