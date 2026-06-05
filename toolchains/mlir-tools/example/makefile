@@ -676,7 +676,7 @@ gemmini-linalg-conv2d-nhwc-hwcf-i8-compile:
 	@${npu_OPT} ./conv_2d_nhwc_hwcf_i8.mlir \
 		-convert-linalg-to-gemmini \
 		-convert-linalg-to-loops \
-		-lower-gemmini | \
+		-lower-gemmini="dim=4 addr_len=32 acc_rows=1024 bank_rows=4096 elem_t=i8 acc_t=i32" | \
 	${npu_TRANSLATE} -npu-to-llvmir | \
 	${npu_LLC} -filetype=obj -mtriple=riscv64 \
 		-mattr=+npuext,+D -float-abi=hard \
