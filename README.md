@@ -183,6 +183,14 @@ The `LegalizeForLLVMExport.cpp` file contains optimization functions for lowerin
 - Application of step-by-step dialect lowering and IR-level optimizations for AI models using MLIR
 - Development of optimization passes considering hardware resources of the target AI engine
 
+## Development Workflow
+
+- Fork this repository before making changes.
+- Create a new branch in your fork with a clear and appropriate name.
+- Develop and commit your changes on that branch.
+- Keep your branch up to date with the upstream T-Vela `main` branch.
+- Submit a pull request to the T-Vela `main` branch.
+
 ## Reference
 
 [1] [Conda](https://docs.conda.io/projects/conda/en/stable/user-guide/install/index.html)
