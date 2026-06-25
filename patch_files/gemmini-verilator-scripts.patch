@@ -1,0 +1,217 @@
+diff --git a/scripts/build-verilator.sh b/scripts/build-verilator.sh
+index 477c091..40f9c7d 100755
+--- a/scripts/build-verilator.sh
++++ b/scripts/build-verilator.sh
+@@ -1,18 +1,40 @@
+ #!/bin/bash
+ 
++set -euo pipefail
++
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++GEMMINI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
++REPO_ROOT="$(cd "${GEMMINI_DIR}/../.." && pwd)"
++CONFIG="${CONFIG:-GemminiRocketConfig}"
++
+ help () {
+   echo "Build a cycle-accurate Verilator simulator for RISCV Gemmini programs,"
+-  echo 'matching `customConfig` in `configs/GemminiCustomConfigs.scala`.'
++  echo "matching ${CONFIG}."
+   echo
+   echo "Usage: $0 [-h|--help] [--debug] [-j [N]]"
+   echo
+   echo "Options:"
+-  echo " debug   Builds a Verilator simulator which generates waveforms. Without"
++  echo " --debug Builds a Verilator simulator which generates waveforms. Without"
+   echo "         this option, the simulator will not generate any waveforms."
+-  echo " j [N]   Allow N jobs at once. Default is 1."
++  echo " -j [N]  Allow N jobs at once. Default is 1."
++  echo
++  echo "Environment:"
++  echo " CONFIG  Chipyard config to build. Default is GemminiRocketConfig."
++  echo
++  echo "Note:    Run this command after running \`source ${REPO_ROOT}/env.sh\`."
+   exit
+ }
+ 
++require_env () {
++  if [ -z "${RISCV:-}" ] || \
++     ! command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 || \
++     ! command -v verilator >/dev/null 2>&1; then
++    echo "Chipyard environment is not ready." >&2
++    echo "Run: source ${REPO_ROOT}/env.sh" >&2
++    exit 1
++  fi
++}
++
+ show_help=0
+ debug=""
+ j="1"
+@@ -21,7 +43,12 @@ while [ $# -gt 0 ] ; do
+   case $1 in
+     -h | --help) show_help=1 ;;
+     --debug) debug="debug" ;;
+-    -j) j=$2; shift
++    -j)
++      if [ $# -gt 1 ] && [[ "$2" != -* ]]; then
++        j=$2
++        shift
++      fi
++      ;;
+   esac
+ 
+   shift
+@@ -31,6 +58,12 @@ if [ $show_help -eq 1 ]; then
+  help
+ fi
+ 
+-cd ../../sims/verilator/
+-make -j$j ${debug} CONFIG=CustomGemminiSoCConfig
++require_env
++
++cd "${REPO_ROOT}/sims/verilator/"
++make_args=("-j${j}" "CONFIG=${CONFIG}")
++if [ -n "${debug}" ]; then
++  make_args+=("${debug}")
++fi
+ 
++make "${make_args[@]}"
+diff --git a/scripts/run-verilator.sh b/scripts/run-verilator.sh
+index b4f2145..4373805 100755
+--- a/scripts/run-verilator.sh
++++ b/scripts/run-verilator.sh
+@@ -1,50 +1,53 @@
+ #!/bin/bash
+ 
+-ROOT="$PWD/"
++set -euo pipefail
+ 
+-WAVEFORM="waveforms/waveform.vcd"
++SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
++GEMMINI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
++REPO_ROOT="$(cd "${GEMMINI_DIR}/../.." && pwd)"
++CONFIG="${CONFIG:-GemminiRocketConfig}"
++DEFAULT_BINARY="tiled_matmul_ws"
+ 
+ help () {
+-  echo "Run a RISCV Gemmini program on Verilator, a cycle-accurate simulator"
++  echo "Run a RISCV Gemmini bare-metal program on Verilator with LOADMEM enabled."
+   echo
+-  echo "Usage: $0 [--pk] [--debug] BINARY"
++  echo "Usage: $0 [-h|--help] [BINARY]"
+   echo
+   echo "Options:"
+-  echo " pk      Run binaries on the proxy kernel, which enables virtual memory"
+-  echo "         and a few syscalls. If this option is not set, binaries will be"
+-  echo "         run in baremetal mode."
+-  echo
+-  echo " debug   Use the debug version of the Verilator simulator, which will"
+-  echo "         output  a waveform to \`$WAVEFORM\`."
++  echo " h       Show this help message."
+   echo
+   echo " BINARY  The RISCV binary that you want to run. This can either be the"
+-  echo '         name of a program in `software/gemmini-rocc-tests`, or it can'
+-  echo "         be the full path to a binary you compiled."
++  echo "         name of a bareMetalC program, or the full path to a binary."
++  echo "         Default is ${DEFAULT_BINARY}."
++  echo
++  echo "Environment:"
++  echo " CONFIG  Chipyard config to run. Default is GemminiRocketConfig."
+   echo
+   echo "Examples:"
+-  echo "         $0 template"
+-  echo "         $0 --debug template"
+-  echo "         $0 --pk mvin_mvout"
+-  echo "         $0 path/to/binary-baremetal"
++  echo "         $0"
++  echo "         $0 tiled_matmul_ws"
++  echo "         $0 path/to/tiled_matmul_ws-baremetal"
+   echo
+-  echo 'Note:    Run this command after running `scripts/build-verilator.sh` or'
+-  echo '         `scripts/build-verilator.sh --debug`.'
++  echo "Note:    Run this command after running \`source ${REPO_ROOT}/env.sh\`."
+   exit
+ }
+ 
+-if [ $# -le 0 ]; then
+-    help
+-fi
++require_env () {
++  if [ -z "${RISCV:-}" ] || \
++     ! command -v riscv64-unknown-elf-gcc >/dev/null 2>&1 || \
++     ! command -v verilator >/dev/null 2>&1 || \
++     ! command -v elf2hex >/dev/null 2>&1; then
++    echo "Chipyard environment is not ready." >&2
++    echo "Run: source ${REPO_ROOT}/env.sh" >&2
++    exit 1
++  fi
++}
+ 
+-pk=0
+-debug=0
+ show_help=0
+-binary=""
++binary="${DEFAULT_BINARY}"
+ 
+ while [ $# -gt 0 ] ; do
+   case $1 in
+-    --pk) pk=1 ;;
+-    --debug) debug=1 ;;
+     -h | --help) show_help=1 ;;
+     *) binary=$1
+   esac
+@@ -56,37 +59,29 @@ if [ $show_help -eq 1 ]; then
+    help
+ fi
+ 
+-if [ $pk -eq 1 ]; then
+-    default_suffix="-pk"
+-    PK="pk -p"
+-else
+-    default_suffix="-baremetal"
+-    PK=""
+-fi
++require_env
+ 
+-if [ $debug -eq 1 ]; then
+-    DEBUG="-debug -v ${ROOT}${WAVEFORM}"
++if [ -f "${binary}" ]; then
++    full_binary_path="$(realpath "${binary}")"
+ else
+-    DEBUG=""
+-fi
+-
+-path=""
+-suffix=""
+-
+-for dir in bareMetalC mlps imagenet transformers ; do
+-    if [ -f "software/gemmini-rocc-tests/build/${dir}/${binary}$default_suffix" ]; then
+-        path="${ROOT}/software/gemmini-rocc-tests/build/${dir}/"
+-        suffix=$default_suffix
++    candidate="${GEMMINI_DIR}/software/gemmini-rocc-tests/build/bareMetalC/${binary}"
++    if [ -f "${candidate}" ]; then
++        full_binary_path="${candidate}"
++    elif [ -f "${candidate}-baremetal" ]; then
++        full_binary_path="${candidate}-baremetal"
++    else
++        full_binary_path=""
+     fi
+-done
+-
+-full_binary_path="${path}${binary}${suffix}"
++fi
+ 
+ if [ ! -f "${full_binary_path}" ]; then
+-    echo "Binary not found: $full_binary_path"
++    echo "Binary not found: ${binary}" >&2
++    echo "Expected: ${GEMMINI_DIR}/software/gemmini-rocc-tests/build/bareMetalC/${binary}-baremetal" >&2
++    echo "Build it with:" >&2
++    echo "  cd ${GEMMINI_DIR}/software/gemmini-rocc-tests" >&2
++    echo "  ./build.sh bareMetalC" >&2
+     exit 1
+ fi
+ 
+-cd ../../sims/verilator/
+-./simulator-chipyard-CustomGemminiSoCConfig${DEBUG} $PK ${full_binary_path}
+-
++cd "${REPO_ROOT}/sims/verilator/"
++make run-binary-fast-hex "CONFIG=${CONFIG}" "BINARY=${full_binary_path}"

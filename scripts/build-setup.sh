@@ -196,6 +196,22 @@ conda activate $CYDIR/.conda-env
 source $CYDIR/scripts/fix-open-files.sh
 EOT
 
+GEMMINI_VERILATOR_PATCH=$CYDIR/patch_files/gemmini-verilator-scripts.patch
+if [ ! -f "$GEMMINI_VERILATOR_PATCH" ]; then
+    error "ERROR: Missing patch file: $GEMMINI_VERILATOR_PATCH"
+    exit 1
+fi
+
+if git -C "$CYDIR/generators/gemmini" apply --check "$GEMMINI_VERILATOR_PATCH" >/dev/null 2>&1; then
+    echo "Applying Gemmini Verilator scripts patch."
+    git -C "$CYDIR/generators/gemmini" apply "$GEMMINI_VERILATOR_PATCH"
+elif git -C "$CYDIR/generators/gemmini" apply --reverse --check "$GEMMINI_VERILATOR_PATCH" >/dev/null 2>&1; then
+    echo "Gemmini Verilator scripts patch is already applied."
+else
+    error "ERROR: Cannot apply Gemmini Verilator scripts patch."
+    exit 1
+fi
+
 echo "Setup complete!"
 
 } 2>&1 | tee build-setup.log
