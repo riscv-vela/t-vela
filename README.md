@@ -66,18 +66,25 @@ ninja
 
 ## Simulation Command
 
-Executing the following command will lower conv_2d_nhwc_hwcf_i8.mlir to generate log.mlir.
+All simulation commands below assume that they are launched from the `t-vela` repository root after loading the Chipyard environment.
 
 ```bash
-cd toolchains/mlir-tools/example
-make gemmini-linalg-conv2d-nhwc-hwcf-i8-lower
+cd t-vela
+source env.sh
 ```
 
-The following command compiles the lowered program to generate a binary.
+### MLIR Compile and Spike Simulation
+
+Run the lowering target from the MLIR example directory. This lowers `conv_2d_nhwc_hwcf_i8.mlir` and generates `log.mlir`.
 
 ```bash
-cd toolchains/mlir-tools/example
-make gemmini-linalg-conv2d-nhwc-hwcf-i8-compile
+(cd toolchains/mlir-tools/example && make gemmini-linalg-conv2d-nhwc-hwcf-i8-lower)
+```
+
+Compile the lowered program to generate the RISC-V binary.
+
+```bash
+(cd toolchains/mlir-tools/example && make gemmini-linalg-conv2d-nhwc-hwcf-i8-compile)
 ```
 
 This compile target invokes the Gemmini lowering pass with explicit hardware parameters:
@@ -88,12 +95,33 @@ This compile target invokes the Gemmini lowering pass with explicit hardware par
 
 These parameters describe the target Gemmini configuration used by the MLIR lowering pipeline. In particular, `dim` controls the systolic array dimension, `acc_rows` and `bank_rows` describe accumulator and scratchpad capacity, and `elem_t`/`acc_t` describe the element and accumulator data types. If these options are omitted, `lower-gemmini` falls back to the defaults defined in `LowerGemminiPass.cpp`.
 
-The following command compiles the binary if needed and simulates it with spike[3].
+Compile the binary if needed and simulate it with Spike[3].
 
 ```bash
-cd toolchains/mlir-tools/example
-make gemmini-linalg-conv2d-nhwc-hwcf-i8-run
+(cd toolchains/mlir-tools/example && make gemmini-linalg-conv2d-nhwc-hwcf-i8-run)
 ```
+
+### Verilator Simulation
+
+Build the Gemmini Verilator simulator from the `t-vela` repository root. The default config is `GemminiRocketConfig`.
+
+```bash
+generators/gemmini/scripts/build-verilator.sh -j 8
+```
+
+Build the Gemmini bare-metal application. The Verilator run script defaults to `tiled_matmul_ws-baremetal`.
+
+```bash
+(cd generators/gemmini/software/gemmini-rocc-tests && ./build.sh bareMetalC)
+```
+
+Run the application on Verilator from the `t-vela` repository root.
+
+```bash
+generators/gemmini/scripts/run-verilator.sh
+```
+
+The run script uses Chipyard's `run-binary-fast-hex` target, which converts the ELF to a loadmem hex file and runs the simulator with `+loadmem=... +loadmem_addr=80000000`. Waveform dumping is disabled in the default flow.
 
 ## MLIR Step-by-Step Lowering Results
 
