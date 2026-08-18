@@ -15,13 +15,7 @@ target_link_libraries(npu-opt
   LowerGemminiPass
   LowerLinalgToGemminiPass
 
-  MLIRTestTransforms
-  MLIRTestTransformDialect
-  MLIRTransforms
-  MLIRTransformUtils
   MLIROptLib
-  MLIRTestTransforms
-  MLIRTestTransformDialect
   MLIRTransforms
   MLIRTransformUtils
   )

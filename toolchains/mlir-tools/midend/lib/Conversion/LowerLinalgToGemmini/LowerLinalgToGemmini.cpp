@@ -21,8 +21,11 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/IR/Matchers.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "llvm/ADT/SetVector.h"
 
 #include "Gemmini/GemminiDialect.h"
 #include "Gemmini/GemminiOps.h"
@@ -34,10 +37,109 @@ using namespace npu;
 //===----------------------------------------------------------------------===//
 
 namespace {
+// Match the bufferized form produced by torch-mlir for an i8 torch.matmul:
+//
+//   linalg.matmul ... outs(%acc : memref<...xi32>)
+//   // torch-mlir may zero-initialize %acc with linalg.fill before the matmul.
+//   linalg.generic ins(%acc) outs(%result : memref<...xi8>) {
+//     %truncated = arith.trunci ... : i32 to i8
+//     linalg.yield %truncated : i8
+//   }
+//
+// Gemmini can perform this final truncation while moving C out of the
+// accumulator. Only match a private accumulator allocation with no other
+// users, so redirecting the move-out to the i8 result cannot remove an
+// observable i32 result.
+static linalg::GenericOp matchTruncatingMatmulResult(linalg::MatmulOp matMulOp,
+                                                     Value accumulator) {
+  auto accumulatorType = dyn_cast<MemRefType>(accumulator.getType());
+  if (!accumulatorType || !accumulatorType.getElementType().isInteger(32) ||
+      !accumulator.getDefiningOp<memref::AllocOp>())
+    return nullptr;
+
+  linalg::GenericOp truncatingOp;
+  linalg::FillOp zeroFillOp;
+  for (Operation *user : accumulator.getUsers()) {
+    if (user == matMulOp || isa<memref::DeallocOp>(user))
+      continue;
+    if (auto fillOp = dyn_cast<linalg::FillOp>(user)) {
+      if (zeroFillOp || fillOp.getInputs().size() != 1 ||
+          fillOp.getOutputs().size() != 1 ||
+          fillOp.getOutputs().front() != accumulator ||
+          !matchPattern(fillOp.getInputs().front(), m_Zero()))
+        return nullptr;
+      zeroFillOp = fillOp;
+      continue;
+    }
+    auto genericOp = dyn_cast<linalg::GenericOp>(user);
+    if (!genericOp || truncatingOp)
+      return nullptr;
+    truncatingOp = genericOp;
+  }
+  if (!truncatingOp || truncatingOp.getInputs().size() != 1 ||
+      truncatingOp.getOutputs().size() != 1 ||
+      truncatingOp.getInputs().front() != accumulator)
+    return nullptr;
+
+  auto resultType =
+      dyn_cast<MemRefType>(truncatingOp.getOutputs().front().getType());
+  if (!resultType || !resultType.getElementType().isInteger(8) ||
+      resultType.getShape() != accumulatorType.getShape())
+    return nullptr;
+
+  // A cast is elementwise only when both indexing maps are identities and all
+  // iterators are parallel. Do not fold transposes or other data movement into
+  // Gemmini's C move-out.
+  auto indexingMaps = truncatingOp.getIndexingMapsArray();
+  if (indexingMaps.size() != 2 ||
+      !llvm::all_of(indexingMaps,
+                    [](AffineMap map) { return map.isIdentity(); }) ||
+      !llvm::all_of(truncatingOp.getIteratorTypesArray(),
+                    [](utils::IteratorType iteratorType) {
+                      return iteratorType == utils::IteratorType::parallel;
+                    }))
+    return nullptr;
+
+  Block &body = truncatingOp.getRegion().front();
+  if (body.getNumArguments() != 2 || !body.getArgument(1).use_empty() ||
+      body.getOperations().size() != 2)
+    return nullptr;
+  auto truncOp = dyn_cast<arith::TruncIOp>(body.front());
+  auto yieldOp = dyn_cast<linalg::YieldOp>(body.back());
+  if (!truncOp || !yieldOp || truncOp.getIn() != body.getArgument(0) ||
+      yieldOp->getNumOperands() != 1 ||
+      yieldOp->getOperand(0) != truncOp.getResult())
+    return nullptr;
+
+  // The fused Gemmini op is built at the truncating op and writes its
+  // destination there, so both linalg ops must live in the same block with the
+  // matmul first. Anything in between must be free of memory effects: an
+  // intervening read of the destination, or write to the accumulator, would
+  // observe a different value once the two ops collapse into one.
+  if (truncatingOp->getBlock() != matMulOp->getBlock() ||
+      !matMulOp->isBeforeInBlock(truncatingOp))
+    return nullptr;
+  for (Operation *op = matMulOp->getNextNode(); op != truncatingOp.getOperation();
+       op = op->getNextNode())
+    if (!isMemoryEffectFree(op))
+      return nullptr;
+
+  // A zero fill only initialises the accumulator when it runs before the
+  // matmul. A fill placed after it clears the product instead, and dropping it
+  // would turn an all-zero result into the matmul result.
+  if (zeroFillOp && (zeroFillOp->getBlock() != matMulOp->getBlock() ||
+                     !zeroFillOp->isBeforeInBlock(matMulOp)))
+    return nullptr;
+
+  return truncatingOp;
+}
+
 class MatmulLowering : public OpRewritePattern<linalg::MatmulOp> {
 public:
-  explicit MatmulLowering(MLIRContext *context, std::string accType)
-      : OpRewritePattern(context), accType(accType) {}
+  explicit MatmulLowering(MLIRContext *context, std::string accType,
+                          bool fuseTruncation)
+      : OpRewritePattern(context), accType(accType),
+        fuseTruncation(fuseTruncation) {}
   using OpRewritePattern<linalg::MatmulOp>::OpRewritePattern;
   LogicalResult matchAndRewrite(linalg::MatmulOp matMulOp,
                                 PatternRewriter &rewriter) const override {
@@ -47,13 +149,41 @@ public:
     Value input0 = inputs[0];
     Value input1 = inputs[1];
     Value output0 = ouputs[0];
-    MemRefType input0Type =  dyn_cast<MemRefType>(input0.getType());
+    MemRefType input0Type = dyn_cast<MemRefType>(input0.getType());
+    MemRefType output0Type = dyn_cast<MemRefType>(output0.getType());
+    if (!input0Type || !output0Type)
+      return failure();
+
+    linalg::GenericOp truncatingOp;
+    Value gemminiOutput = output0;
+    if (fuseTruncation && input0Type.getElementType().isInteger(8)) {
+      truncatingOp = matchTruncatingMatmulResult(matMulOp, output0);
+      if (truncatingOp)
+        gemminiOutput = truncatingOp.getOutputs().front();
+    }
+    auto gemminiOutputType = cast<MemRefType>(gemminiOutput.getType());
+
+    // Gemmini moves C out either as elem_t or, with fullC, as acc_t. For an i8
+    // elem_t there is no encoding for any other C type, so reject the
+    // combination instead of silently emitting an i8 move-out into it.
+    Type inputElementType = input0Type.getElementType();
+    Type outputElementType = gemminiOutputType.getElementType();
+    if (inputElementType.isInteger(8) && !outputElementType.isInteger(8) &&
+        !outputElementType.isInteger(32))
+      return failure();
+
+    // Build at the truncating op when it is fused away: its destination is
+    // written there, and it need not dominate the matmul.
+    if (truncatingOp)
+      rewriter.setInsertionPoint(truncatingOp);
+
     MemRefType biasType =
-        MemRefType::get(input0Type.getShape(), rewriter.getI32Type());
+        MemRefType::get(gemminiOutputType.getShape(), rewriter.getI32Type());
     TypedAttr fillOpInputAttr = rewriter.getI32IntegerAttr(0);
     Type fillOpInsType = rewriter.getI32Type();
     if (accType == "f32") {
-      biasType = MemRefType::get(input0Type.getShape(), rewriter.getF32Type());
+      biasType =
+          MemRefType::get(gemminiOutputType.getShape(), rewriter.getF32Type());
       fillOpInputAttr = rewriter.getF32FloatAttr(0);
       fillOpInsType = rewriter.getF32Type();
     }
@@ -63,16 +193,41 @@ public:
     Value fillOpInputValue =
         rewriter.create<arith::ConstantOp>(loc, fillOpInsType, fillOpInputAttr);
     rewriter.create<linalg::FillOp>(loc, fillOpInputValue, bias);
-    rewriter.replaceOpWithNewOp<gemmini::TileMatMulOp>(
-        matMulOp, input0, input1, output0, bias, /*aScaleFactor = */ scale1,
+    auto tileMatMulOp = rewriter.create<gemmini::TileMatMulOp>(
+        loc, input0, input1, gemminiOutput, bias,
+        /*aScaleFactor = */ scale1,
         /*bScaleFactor = */ scale1, /*dScaleFactor = */ scale1, /*act = */ 0,
         /*accScale = */ scale1, /*bertScale = */ scale0);
+    // fullC controls both the Gemmini move-out format and the DRAM stride. It
+    // must therefore describe the buffer passed as C, not the intermediate
+    // linalg.matmul accumulator that may have been fused away.
+    if (inputElementType.isInteger(8) && outputElementType.isInteger(32))
+      tileMatMulOp->setAttr("fullC", rewriter.getBoolAttr(true));
     rewriter.create<memref::DeallocOp>(loc, bias);
+
+    if (!truncatingOp) {
+      rewriter.eraseOp(matMulOp);
+      return success();
+    }
+
+    // Collect before erasing anything: a user stays on the accumulator's use
+    // list until the conversion driver commits the erasure.
+    Operation *accumulatorAlloc = output0.getDefiningOp();
+    llvm::SmallSetVector<Operation *, 4> deadUsers;
+    for (Operation *user : output0.getUsers())
+      if (isa<memref::DeallocOp, linalg::FillOp>(user))
+        deadUsers.insert(user);
+    rewriter.eraseOp(matMulOp);
+    rewriter.eraseOp(truncatingOp);
+    for (Operation *user : deadUsers)
+      rewriter.eraseOp(user);
+    rewriter.eraseOp(accumulatorAlloc);
     return success();
   }
 
 private:
   std::string accType;
+  bool fuseTruncation;
 };
 
 class Conv2DNchwFchwLowering
@@ -411,8 +566,9 @@ public:
 } // namespace
 
 void populateLowerLinalgToGemminiConversionPatterns(RewritePatternSet &patterns,
-                                                    std::string accType) {
-  patterns.add<MatmulLowering>(patterns.getContext(), accType);
+                                                    std::string accType,
+                                                    bool fuseTruncation) {
+  patterns.add<MatmulLowering>(patterns.getContext(), accType, fuseTruncation);
   patterns.add<Conv2DNchwFchwLowering>(patterns.getContext(), accType);
   patterns.add<Conv2DNhwcHwcfLowering>(patterns.getContext(), accType);
   patterns.add<BatchMatMulOpLowering>(patterns.getContext());
@@ -437,6 +593,17 @@ public:
   Option<std::string> accType{*this, "acc_t",
                               llvm::cl::desc("The type of acc_t."),
                               llvm::cl::init("i32")};
+  // Off by default: Gemmini clamps the accumulator to [-128, 127] on an i8
+  // move-out, while arith.trunci keeps the low 8 bits. The two agree only
+  // while the accumulator stays in range, so folding one into the other is a
+  // deliberate change of result, not a pure optimisation.
+  Option<bool> fuseTruncation{
+      *this, "fuse-truncation",
+      llvm::cl::desc("Fold an i8 truncation of the matmul result into "
+                     "Gemmini's C move-out. The move-out saturates, so an "
+                     "accumulator outside the int8 range yields a different "
+                     "result than arith.trunci."),
+      llvm::cl::init(false)};
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<gemmini::GemminiDialect, func::FuncDialect,
                     memref::MemRefDialect, linalg::LinalgDialect,
@@ -453,7 +620,8 @@ void LowerLinalgToGemminiPass::runOnOperation() {
                          arith::ArithDialect, scf::SCFDialect>();
   target.addLegalOp<linalg::FillOp, linalg::YieldOp>();
   RewritePatternSet patterns(context);
-  populateLowerLinalgToGemminiConversionPatterns(patterns, accType);
+  populateLowerLinalgToGemminiConversionPatterns(patterns, accType,
+                                                fuseTruncation);
   if (failed(applyPartialConversion(module, target, std::move(patterns))))
     signalPassFailure();
 }
