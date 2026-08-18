@@ -123,6 +123,11 @@ public:
         inputShape[0] * outputShape[2] * outputShape[3], outputShape[1]};
     MemRefType outputMatType = MemRefType::get(outputMatShape, outputElemType);
     Value bias = rewriter.create<memref::AllocOp>(loc, biasType);
+    TypedAttr zeroAttr = rewriter.getI32IntegerAttr(0);
+    if (accType == "f32")
+      zeroAttr = rewriter.getF32FloatAttr(0);
+    Value zero = rewriter.create<arith::ConstantOp>(loc, zeroAttr);
+    rewriter.create<linalg::FillOp>(loc, zero, bias);
     Value outputMat = rewriter.create<memref::AllocOp>(loc, outputMatType);
     TypedAttr outDimAttr = rewriter.getI64IntegerAttr(outputShape[2]);
     Value outDim = rewriter.create<arith::ConstantOp>(
