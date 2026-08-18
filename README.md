@@ -205,6 +205,8 @@ Lowers Gemmini dialect operations to LLVM IR with Gemmini intrinsics, generating
 
 The `LegalizeForLLVMExport.cpp` file contains optimization functions for lowering Gemmini dialect operations to LLVM IR. This pass performs hardware-aware optimization by considering Gemmini’s systolic array dimensions and scratchpad capacity to automatically select valid tile sizes for efficient code generation.
 
+For F-Vela ternary GEMM, the `gemmini.tile_matmul` operation supports the `ternary=true` attribute. During lowering, `is_mpgemm` is encoded in bit 20 of the `LOOP_WS` `rs1` payload. The F-Vela RTL was tested using an example binary generated from `toolchains/mlir-tools/example/tile-matmul-ternary.mlir`, confirming that the `is_mpgemm` flag is correctly decoded from `rs1[20]`.
+
 ## Development Status
 
 - Development of mapping functionality for machine learning models based on general-purpose ML frameworks
@@ -226,6 +228,8 @@ The `LegalizeForLLVMExport.cpp` file contains optimization functions for lowerin
 [2] [Chipyard](https://github.com/ucb-bar/chipyard)
 
 [3] [Spike](https://chipyard.readthedocs.io/en/stable/Software/Spike.html)
+
+[4] [F-Vela](https://github.com/riscv-vela/f-vela)
 
 ## License
 

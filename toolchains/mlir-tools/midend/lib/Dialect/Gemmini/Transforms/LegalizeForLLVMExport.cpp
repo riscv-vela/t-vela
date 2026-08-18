@@ -520,7 +520,7 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
                      size_t aRowStride, size_t bRowStride, size_t dRowStride,
                      size_t cRowStride, bool aTranspose, bool bTranspose,
                      bool fullC, bool lowD, bool exAccumulate, int act,
-                     TileMatMulOp &tileMatMulOp,
+                     bool isMpgemm, TileMatMulOp &tileMatMulOp,
                      ConversionPatternRewriter &rewriter) const {
     // loopWsConfigBounds instruction.
     uint64_t rs1 = (uint64_t)padK << 32 | (uint64_t)padJ << 16 | (uint64_t)padI;
@@ -548,12 +548,10 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
     rs2Value = rewriter.create<arith::ConstantOp>(
         loc, rewriter.getI64IntegerAttr(cRowStride));
     rewriter.create<LoopWsConfigStridesDC_IntrOp>(loc, rs1Value, rs2Value);
-    rs1 = (uint64_t)act << 8 | lowD << 2 | (fullC) << 1 | exAccumulate;
+    rs1 = (uint64_t)isMpgemm << 20 | (uint64_t)act << 8 | lowD << 2 | (fullC) << 1 | exAccumulate;
     rs2 = bTranspose << 1 | aTranspose;
-    rs1Value = rewriter.create<arith::ConstantOp>(
-        loc, i64Type, rewriter.getI64IntegerAttr(rs1));
-    rs2Value = rewriter.create<arith::ConstantOp>(
-        loc, i64Type, rewriter.getI64IntegerAttr(rs2));
+    rs1Value = rewriter.create<arith::ConstantOp>(loc, i64Type, rewriter.getI64IntegerAttr(rs1));
+    rs2Value = rewriter.create<arith::ConstantOp>(loc, i64Type, rewriter.getI64IntegerAttr(rs2));
     rewriter.create<LoopWs_IntrOp>(loc, rs1Value, rs2Value);
   }
 
@@ -564,12 +562,12 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
                        size_t strideB, size_t strideD, size_t strideC,
                        bool aTranspose, bool bTranspose, bool fullC, bool lowD,
                        bool noBias, bool repeatingBias, int act,
-                       TileMatMulOp &tileMatMulOp,
+                       bool isMpgemm, TileMatMulOp &tileMatMulOp,
                        ConversionPatternRewriter &rewriter) const {
 
     gemminiLoopWs(i, j, k, padI, padJ, padK, a, b, d, c, strideA, strideB,
                   repeatingBias ? 0 : strideD, strideC, aTranspose, bTranspose,
-                  fullC, lowD, !noBias, act, tileMatMulOp, rewriter);
+                  fullC, lowD, !noBias, act, isMpgemm, tileMatMulOp, rewriter);
   }
 
   // Tiling functions
@@ -746,7 +744,8 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
       size_t tileI, size_t tileJ, size_t tileK, int act, acc_scale_t scale,
       acc_scale_t bertScale, bool repeatingBias, bool aTranspose,
       bool bTranspose, bool fullC, bool lowD, uint8_t weightA, int dataflow,
-      TileMatMulOp &tileMatMulOp, ConversionPatternRewriter &rewriter) const {
+      bool isMpgemm, TileMatMulOp &tileMatMulOp,
+      ConversionPatternRewriter &rewriter) const {
     const size_t dimIPadded = (dimI / dim + (dimI % dim != 0)) * dim;
     const size_t dimJPadded = (dimJ / dim + (dimJ % dim != 0)) * dim;
     const size_t dimKPadded = (dimK / dim + (dimK % dim != 0)) * dim;
@@ -768,6 +767,7 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
     const bool noBias = false;
     const size_t sizeofD = lowD ? sizeOfElemT : sizeOfAccT;
     const size_t sizeofC = fullC ? sizeOfAccT : sizeOfElemT;
+    const size_t outputJFactor = isMpgemm ? kTernaryPacking : 1;
     Location loc = tileMatMulOp.getLoc();
     llvm::APFloat accScaleIdentity((float)ACC_SCALE_IDENTITY);
     rewriter.create<ConfigExOp>(loc, /*dataflow = */ dataflow,
@@ -827,7 +827,8 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
                                                      preAttr);
           } else {
             size_t biasRow = repeatingBias ? 0 : i0 * tileI * dim;
-            size_t offset = (biasRow * strideD + j0 * tileJ * dim) * sizeofD;
+            size_t jOffset = j0 * tileJ * dim * outputJFactor;
+            size_t offset = (biasRow * strideD + jOffset) * sizeofD;
             IntegerAttr offsetAttr = rewriter.getI64IntegerAttr(offset);
             Value offsetValue = rewriter.create<arith::ConstantOp>(
                 loc, rewriter.getI64Type(), offsetAttr);
@@ -837,8 +838,8 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
 
           Value out;
           if (k0 == K0 - 1) {
-            size_t offset =
-                (i0 * tileI * dim * strideC + j0 * tileJ * dim) * sizeofC;
+            size_t jOffset = j0 * tileJ * dim * outputJFactor;
+            size_t offset = (i0 * tileI * dim * strideC + jOffset) * sizeofC;
             IntegerAttr offsetAttr = rewriter.getI64IntegerAttr(offset);
             Value offsetValue = rewriter.create<arith::ConstantOp>(
                 loc, rewriter.getI64Type(), offsetAttr);
@@ -902,12 +903,11 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
                             dScaleFactor, i, j, k, padI, padJ, padK, strideA,
                             strideB, strideD, strideC, aTranspose, bTranspose,
                             fullC, lowD, noBias, repeatingBias, act,
-                            tileMatMulOp, rewriter);
+                            isMpgemm, tileMatMulOp, rewriter);
           }
         }
     IntegerAttr flushAttr = rewriter.getI64IntegerAttr(0);
-    Value flushValue = rewriter.create<arith::ConstantOp>(
-        loc, rewriter.getI64Type(), flushAttr);
+    Value flushValue = rewriter.create<arith::ConstantOp>(loc, rewriter.getI64Type(), flushAttr);
     rewriter.replaceOpWithNewOp<Flush_IntrOp>(tileMatMulOp, flushValue,
                                               flushValue);
     return;
@@ -917,9 +917,17 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
     return (I * K + K * J) * dim;
   }
 
+  size_t tiledMpgemmTotalSpadRows(size_t I, size_t packedJ, size_t K) const {
+    return (I * K + K * packedJ) * dim;
+  }
+
   size_t tiledMatmulTotalAccRows(size_t I, size_t J) const {
     return (I * J) * dim;
   }
+
+  static constexpr size_t kBitsPerByte = 8;
+  static constexpr size_t kBitsPerTernaryWeight = 2;
+  static constexpr size_t kTernaryPacking = kBitsPerByte / kBitsPerTernaryWeight;
 
 public:
   using ConvertOpToLLVMPattern<TileMatMulOp>::ConvertOpToLLVMPattern;
@@ -1015,6 +1023,12 @@ public:
     bool fullC = tileMatMulOp.getFullC();
     bool lowD = tileMatMulOp.getLowD();
     uint8_t weightA = tileMatMulOp.getWeightA();
+    int dataflow = tileMatMulOp.getDataflow();
+    bool ternary = tileMatMulOp.getTernary();
+
+    if (ternary && cArrayShape[1] % static_cast<int64_t>(kTernaryPacking) != 0)
+      return tileMatMulOp.emitOpError() << "requires C columns to be a multiple of four when ternary=true";
+
     size_t dimIPaded = (dimI / dim + (dimI % dim != 0)) * dim;
     size_t dimJPaded = (dimJ / dim + (dimJ % dim != 0)) * dim;
     size_t dimKPaded = (dimK / dim + (dimK % dim != 0)) * dim;
@@ -1025,29 +1039,41 @@ public:
       tileI = 1;
       tileJ = dimJPaded / dim;
       tileK = 1;
+    } else if (ternary) {
+      tileI = dimIPaded / dim < 2 ? dimIPaded / dim : 1;
+      tileJ = dimJPaded / dim < 4 ? dimJPaded / dim : 2;
+      tileK = dimKPaded / dim < dbMaxTileK ? dimKPaded / dim : dbMaxTileK;
     } else {
       tileI = dimIPaded / dim < dbMaxTileIJ ? dimIPaded / dim : dbMaxTileIJ;
       tileJ = dimJPaded / dim < dbMaxTileIJ ? dimJPaded / dim : dbMaxTileIJ;
       tileK = dimKPaded / dim < dbMaxTileK ? dimKPaded / dim : dbMaxTileK;
     }
+    auto totalSpadRows = [&](size_t i, size_t j, size_t k) {
+      return ternary ? tiledMpgemmTotalSpadRows(i, j, k)
+                     : tiledMatmulTotalSpadRows(i, j, k);
+    };
+    auto totalAccRows = [&](size_t i, size_t j) {
+      const size_t logicalJ = ternary ? j * kTernaryPacking : j;
+      return tiledMatmulTotalAccRows(i, logicalJ);
+    };
     while (true) {
       bool increased = false;
 
-      if (tiledMatmulTotalSpadRows(tileI, tileJ + 1, tileK) <= maxSpadRows &&
-          tiledMatmulTotalAccRows(tileI, tileJ + 1) <= maxAccRows &&
+      if (totalSpadRows(tileI, tileJ + 1, tileK) <= maxSpadRows &&
+          totalAccRows(tileI, tileJ + 1) <= maxAccRows &&
           (tileJ + 1) * dim <= dimJPaded) {
         tileJ++;
         increased = true;
       }
 
-      if (tiledMatmulTotalSpadRows(tileI + 1, tileJ, tileK) <= maxSpadRows &&
-          tiledMatmulTotalAccRows(tileI + 1, tileJ) <= maxAccRows &&
+      if (totalSpadRows(tileI + 1, tileJ, tileK) <= maxSpadRows &&
+          totalAccRows(tileI + 1, tileJ) <= maxAccRows &&
           (tileI + 1) * dim <= dimIPaded) {
         tileI++;
         increased = true;
       }
 
-      if (tiledMatmulTotalSpadRows(tileI, tileJ, tileK + 1) <= maxSpadRows &&
+      if (totalSpadRows(tileI, tileJ, tileK + 1) <= maxSpadRows &&
           (tileK + 1) * dim <= dimKPaded) {
         tileK++;
         increased = true;
@@ -1055,14 +1081,12 @@ public:
       if (!increased)
         break;
     }
-    int dataflow = tileMatMulOp.getDataflow();
-
     tiledMatmulOuter(dimI, dimJ, dimK, aArrayindexCastOp, bArrayindexCastOp,
                      dArrayindexCastOp, cArrayindexCastOp, strideA, strideB,
                      strideD, strideC, aScaleFactor, bScaleFactor, dScaleFactor,
                      tileI, tileJ, tileK, act, scale, bertScale, repeatingBias,
                      aTranspose, bTranspose, fullC, lowD, weightA, dataflow,
-                     tileMatMulOp, rewriter);
+                     ternary, tileMatMulOp, rewriter);
     return success();
   };
 

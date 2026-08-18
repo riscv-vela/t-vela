@@ -289,7 +289,8 @@ def TileMatMulOp : Gemmini_Op<"tile_matmul"> {
                        DefaultValuedAttr<BoolAttr, "false">:$fullC,
                        DefaultValuedAttr<BoolAttr, "false">:$lowD,
                        DefaultValuedAttr<I64Attr, "0">:$weightA,
-                       DefaultValuedAttr<I64Attr, "1">:$dataflow);
+                       DefaultValuedAttr<I64Attr, "1">:$dataflow,
+                       DefaultValuedAttr<BoolAttr, "false">:$ternary);
   let assemblyFormat = [{
     $aArray $bArray $cArray $dArray attr-dict `:`
     type($aArray) type($bArray) type($cArray) type($dArray)
