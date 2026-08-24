@@ -101,6 +101,27 @@ Compile the binary if needed and simulate it with Spike[3].
 (cd toolchains/mlir-tools/example && make gemmini-linalg-conv2d-nhwc-hwcf-i8-run)
 ```
 
+### PyTorch INT8 Matmul via torch-mlir
+
+The [torch-mlir example](toolchains/mlir-tools/example/torch-mlir/README.md)
+exports a 16x16 `torch.matmul` with `int8` inputs to Linalg, bufferizes it,
+compiles it with the Gemmini toolchain, and verifies the result on Spike. Both
+of Gemmini's C move-out formats are built: an `int8` result (`fullC = false`,
+the accumulator is narrowed on the way out) and an `int32` result
+(`fullC = true`, the accumulator is moved out unchanged).
+
+```bash
+conda activate tmlir
+cd toolchains/mlir-tools/example/torch-mlir
+make compile-all
+make run-all
+```
+
+Use `make run DTYPE=i8` or `make run DTYPE=i32` to build just one of them.
+`make run DTYPE=i8 FUSE_TRUNCATION=1` folds the i8 narrowing into the move-out,
+which saturates instead of wrapping. The example README covers the trade-off
+and how to install Spike, `pk`, and the Gemmini functional model.
+
 ### Verilator Simulation
 
 Build the Gemmini Verilator simulator from the `t-vela` repository root. The default config is `GemminiRocketConfig`.
