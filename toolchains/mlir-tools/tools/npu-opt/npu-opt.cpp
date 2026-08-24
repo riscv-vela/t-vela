@@ -36,6 +36,9 @@
 
 #include "Gemmini/GemminiDialect.h"
 #include "Gemmini/GemminiOps.h"
+#include "TVela/BufferizableOpInterfaceImpl.h"
+#include "TVela/Passes.h"
+#include "TVela/TVelaDialect.h"
 
 namespace mlir {
 namespace npu {
@@ -49,14 +52,17 @@ int main(int argc, char **argv) {
   mlir::registerAllPasses();
   mlir::npu::registerLowerGemminiPass();
   mlir::npu::registerLowerLinalgToGemminiPass();
+  mlir::npu::registerLowerTVelaToFVelaRuntimePass();
 
   mlir::DialectRegistry registry;
   // Register all MLIR core dialects.
   registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
+  npu::tvela::registerBufferizableOpInterfaceExternalModels(registry);
   // Register dialects in npu-mlir project.
   // clang-format off
   registry.insert< npu::gemmini::GemminiDialect>();
+  registry.insert< npu::tvela::TVelaDialect>();
   // clang-format on
 
   return mlir::failed(

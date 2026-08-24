@@ -1,2 +1,3 @@
 add_subdirectory(LowerGemmini)
 add_subdirectory(LowerLinalgToGemmini)
+add_subdirectory(LowerTVelaToFVelaRuntime)

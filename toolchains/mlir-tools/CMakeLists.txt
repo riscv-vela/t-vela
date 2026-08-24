@@ -88,6 +88,7 @@ add_subdirectory(cmake)
 add_subdirectory(midend)
 add_subdirectory(backend)
 add_subdirectory(tools)
+add_subdirectory(test)
 
 #-------------------------------------------------------------------------------
 # Target check-npu
