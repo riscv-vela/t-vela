@@ -14,6 +14,9 @@ set(LinkedLibs
 
   LowerGemminiPass
   LowerLinalgToGemminiPass
+  LowerTVelaToFVelaRuntimePass
+  npuTVela
+  npuTVelaTransforms
 )
 
 
