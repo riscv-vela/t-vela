@@ -1,0 +1,212 @@
+diff --git a/include/torch-mlir/Dialect/TorchConversion/Transforms/Passes.h b/include/torch-mlir/Dialect/TorchConversion/Transforms/Passes.h
+index 0cb13aff..074ae8e4 100644
+--- a/include/torch-mlir/Dialect/TorchConversion/Transforms/Passes.h
++++ b/include/torch-mlir/Dialect/TorchConversion/Transforms/Passes.h
+@@ -38,6 +38,10 @@ struct LinalgOnTensorsBackendPipelineOptions
+ void createTorchBackendToLinalgOnTensorsBackendPipeline(
+     OpPassManager &pm, const LinalgOnTensorsBackendPipelineOptions &options);
+
++/// Converts the T-Vela VFROPE opaque Torch operator to its target carrier op.
++std::unique_ptr<InterfacePass<FunctionOpInterface>>
++createConvertTVelaVFRopePass();
++
+ // Do not register the TOSA options if the TOSA target is disabled
+ #ifdef TORCH_MLIR_ENABLE_TOSA
+ struct TosaBackendPipelineOptions
+diff --git a/lib/Dialect/Torch/Transforms/LowerToBackendContract.cpp b/lib/Dialect/Torch/Transforms/LowerToBackendContract.cpp
+index 0596eee0..a98d13df 100644
+--- a/lib/Dialect/Torch/Transforms/LowerToBackendContract.cpp
++++ b/lib/Dialect/Torch/Transforms/LowerToBackendContract.cpp
+@@ -607,7 +607,8 @@ static void markDecomposedOpsAsIllegal(MLIRContext *context,
+   target.addDynamicallyLegalOp<OperatorOp>(
+       [backendLegalOpsSet](OperatorOp opOp) {
+         auto opName = cast<StringAttr>(opOp->getAttr("name")).getValue();
+-        return backendLegalOpsSet.contains(opName);
++        return opName == "torch.tvela.vfrope_q15_chunk" ||
++               backendLegalOpsSet.contains(opName);
+       });
+ }
+
+diff --git a/lib/Dialect/Torch/Transforms/ReduceOpVariants.cpp b/lib/Dialect/Torch/Transforms/ReduceOpVariants.cpp
+index 187d2341..1107e564 100644
+--- a/lib/Dialect/Torch/Transforms/ReduceOpVariants.cpp
++++ b/lib/Dialect/Torch/Transforms/ReduceOpVariants.cpp
+@@ -446,7 +446,10 @@ struct ReduceOpVariantsPass
+     target.markUnknownOpDynamicallyLegal([&extraLibraryModuleSymTable,
+                                           &specializedNames](Operation *op) {
+       if (isa<OperatorOp>(op)) {
+-        if (specializedNames.contains(cast<OperatorOp>(op).getNameAttr())) {
++        auto operatorOp = cast<OperatorOp>(op);
++        if (operatorOp.getName() == "torch.tvela.vfrope_q15_chunk")
++          return true;
++        if (specializedNames.contains(operatorOp.getNameAttr())) {
+           return false;
+         }
+       }
+diff --git a/lib/Dialect/TorchConversion/Transforms/CMakeLists.txt b/lib/Dialect/TorchConversion/Transforms/CMakeLists.txt
+index dd5ff074..b1a79a96 100644
+--- a/lib/Dialect/TorchConversion/Transforms/CMakeLists.txt
++++ b/lib/Dialect/TorchConversion/Transforms/CMakeLists.txt
+@@ -25,6 +25,7 @@ add_mlir_library(TorchMLIRTorchConversionPasses
+   BackendTypeConversionPasses.cpp
+   Passes.cpp
+   ConvertCustomQuantOp.cpp
++  ConvertTVelaVFRope.cpp
+   UnpackQuantTensor.cpp
+   VerifyLinalgOnTensorsBackendContract.cpp
+   VerifyTosaBackendContract.cpp
+diff --git a/lib/Dialect/TorchConversion/Transforms/ConvertTVelaVFRope.cpp b/lib/Dialect/TorchConversion/Transforms/ConvertTVelaVFRope.cpp
+new file mode 100644
+index 00000000..c69f293a
+--- /dev/null
++++ b/lib/Dialect/TorchConversion/Transforms/ConvertTVelaVFRope.cpp
+@@ -0,0 +1,123 @@
++//===----------------------------------------------------------------------===//
++//
++// Part of the LLVM Project, under the Apache License v2.0 with LLVM Exceptions.
++// See https://llvm.org/LICENSE.txt for license information.
++// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
++// Also available under a BSD-style license. See LICENSE.
++//
++//===----------------------------------------------------------------------===//
++
++#include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h"
++
++#include "mlir/IR/BuiltinTypes.h"
++#include "mlir/IR/Dialect.h"
++#include "mlir/Transforms/DialectConversion.h"
++#include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
++#include "torch-mlir/Dialect/Torch/IR/TorchOps.h"
++#include "torch-mlir/Dialect/TorchConversion/Transforms/BackendTypeConversion.h"
++
++using namespace mlir;
++using namespace mlir::torch;
++
++namespace {
++
++constexpr StringLiteral kTorchOpName = "torch.tvela.vfrope_q15_chunk";
++constexpr StringLiteral kTVelaOpName = "tvela.vfrope_q15_chunk";
++constexpr int64_t kMaxConfigField = 0xffff;
++
++class TVelaCarrierDialect final : public Dialect {
++public:
++  explicit TVelaCarrierDialect(MLIRContext *context)
++      : Dialect(getDialectNamespace(), context,
++                TypeID::get<TVelaCarrierDialect>()) {
++    allowUnknownOperations();
++  }
++
++  static StringRef getDialectNamespace() { return "tvela"; }
++};
++
++FailureOr<int64_t> getConstantInt(Value value) {
++  auto constant = value.getDefiningOp<Torch::ConstantIntOp>();
++  if (!constant)
++    return failure();
++  return constant.getValue();
++}
++
++class ConvertVFRopeOp final : public OpConversionPattern<Torch::OperatorOp> {
++public:
++  using OpConversionPattern::OpConversionPattern;
++
++  LogicalResult
++  matchAndRewrite(Torch::OperatorOp op, OpAdaptor adaptor,
++                  ConversionPatternRewriter &rewriter) const override {
++    if (op.getName() != kTorchOpName)
++      return rewriter.notifyMatchFailure(op, "not the T-Vela VFROPE op");
++    if (op.getNumOperands() != 3 || op.getNumResults() != 1)
++      return op.emitOpError(
++          "expects operands (tensor, m, idx) and one tensor result");
++
++    FailureOr<int64_t> m = getConstantInt(op.getOperand(1));
++    FailureOr<int64_t> idx = getConstantInt(op.getOperand(2));
++    if (failed(m) || failed(idx))
++      return op.emitOpError("requires constant integer m and idx operands");
++    if (*m < 0 || *m > kMaxConfigField || *idx < 0 || *idx > kMaxConfigField)
++      return op.emitOpError("requires m and idx in the range 0..65535");
++
++    Type convertedResult = getTypeConverter()->convertType(op.getType(0));
++    auto tensorType = dyn_cast_or_null<RankedTensorType>(convertedResult);
++    if (!tensorType || tensorType.getShape() != ArrayRef<int64_t>{8} ||
++        !tensorType.getElementType().isSignlessInteger(16))
++      return op.emitOpError("requires a tensor<8xi16> result");
++
++    Value input = adaptor.getOperands().front();
++    if (input.getType() != tensorType)
++      return op.emitOpError(
++          "requires matching tensor<8xi16> input and result types");
++
++    OperationState state(op.getLoc(), kTVelaOpName);
++    state.addOperands(input);
++    state.addTypes(tensorType);
++    state.addAttribute("m", rewriter.getI64IntegerAttr(*m));
++    state.addAttribute("idx", rewriter.getI64IntegerAttr(*idx));
++    Operation *replacement = rewriter.create(state);
++    rewriter.replaceOp(op, replacement->getResults());
++    return success();
++  }
++};
++
++class ConvertTVelaVFRopePass final
++    : public PassWrapper<ConvertTVelaVFRopePass,
++                         InterfacePass<FunctionOpInterface>> {
++public:
++  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ConvertTVelaVFRopePass)
++
++  void getDependentDialects(DialectRegistry &registry) const override {
++    registry.insert<Torch::TorchDialect, TVelaCarrierDialect>();
++    TorchConversion::getBackendTypeConversionDependentDialects(registry);
++  }
++
++  void runOnOperation() override {
++    MLIRContext *context = &getContext();
++    TypeConverter typeConverter;
++    typeConverter.addConversion([](Type type) { return type; });
++
++    ConversionTarget target(*context);
++    target.addLegalDialect<Torch::TorchDialect, TVelaCarrierDialect>();
++    TorchConversion::setupBackendTypeConversion(target, typeConverter);
++    target.addDynamicallyLegalOp<Torch::OperatorOp>(
++        [](Torch::OperatorOp op) { return op.getName() != kTorchOpName; });
++
++    RewritePatternSet patterns(context);
++    patterns.add<ConvertVFRopeOp>(typeConverter, context);
++    if (failed(applyPartialConversion(getOperation(), target,
++                                      std::move(patterns))))
++      signalPassFailure();
++  }
++};
++
++} // namespace
++
++std::unique_ptr<InterfacePass<FunctionOpInterface>>
++mlir::torch::TorchConversion::createConvertTVelaVFRopePass() {
++  return std::make_unique<ConvertTVelaVFRopePass>();
++}
+diff --git a/lib/Dialect/TorchConversion/Transforms/Passes.cpp b/lib/Dialect/TorchConversion/Transforms/Passes.cpp
+index 9602b30e..63562d57 100644
+--- a/lib/Dialect/TorchConversion/Transforms/Passes.cpp
++++ b/lib/Dialect/TorchConversion/Transforms/Passes.cpp
+@@ -70,6 +70,9 @@ void mlir::torch::registerTorchConversionPasses() {
+ void TorchConversion::createTorchBackendToLinalgOnTensorsBackendPipeline(
+     OpPassManager &pm,
+     const TorchConversion::LinalgOnTensorsBackendPipelineOptions &options) {
++  pm.addNestedPass<func::FuncOp>(
++      TorchConversion::createConvertTVelaVFRopePass());
++
+   // Fix non constant dims passed to reduction ops
+   pm.addNestedPass<func::FuncOp>(
+       torch::Torch::createRestructureNonConstantAxesPass());
+diff --git a/lib/Dialect/TorchConversion/Transforms/VerifyLinalgOnTensorsBackendContract.cpp b/lib/Dialect/TorchConversion/Transforms/VerifyLinalgOnTensorsBackendContract.cpp
+index f08a1f38..8dfe8ea9 100644
+--- a/lib/Dialect/TorchConversion/Transforms/VerifyLinalgOnTensorsBackendContract.cpp
++++ b/lib/Dialect/TorchConversion/Transforms/VerifyLinalgOnTensorsBackendContract.cpp
+@@ -88,6 +88,7 @@ class VerifyLinalgOnTensorsBackendContractPass
+     target.addDynamicallyLegalDialect<scf::SCFDialect>(opHasLegalTypes);
+     target.addDynamicallyLegalDialect<ml_program::MLProgramDialect>(
+         opHasLegalTypes);
++    target.addDynamicallyLegalDialect(opHasLegalTypes, "tvela");
+
+     // ConstantOp is used for tensors and for scalars.
+     target.addDynamicallyLegalOp<arith::ConstantOp>(opHasLegalTypes);

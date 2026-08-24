@@ -21,6 +21,9 @@
 #include "mlir/IR/Dialect.h"
 
 #include "Dialect/Gemmini/GemminiDialect.h"
+#include "Dialect/TVela/BufferizableOpInterfaceImpl.h"
+#include "Dialect/TVela/Passes.h"
+#include "Dialect/TVela/TVelaDialect.h"
 
 namespace mlir {
 namespace npu {
@@ -31,9 +34,12 @@ void registerLowerLinalgToGemminiPass();
 
 void mlir::npu::registerAllDialects(mlir::DialectRegistry &registry) {
   registry.insert<::npu::gemmini::GemminiDialect>();
+  registry.insert<::npu::tvela::TVelaDialect>();
+  ::npu::tvela::registerBufferizableOpInterfaceExternalModels(registry);
 }
 
 void mlir::npu::registerAllPasses() {
   mlir::npu::registerLowerGemminiPass();
   mlir::npu::registerLowerLinalgToGemminiPass();
+  mlir::npu::registerLowerTVelaToFVelaRuntimePass();
 }

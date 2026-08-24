@@ -12,10 +12,17 @@ target_link_libraries(npu-opt
   ${conversion_libs}
   ${extension_libs}
   npuGemmini
+  npuTVela
+  npuTVelaTransforms
   LowerGemminiPass
   LowerLinalgToGemminiPass
+  LowerTVelaToFVelaRuntimePass
 
   MLIROptLib
+  MLIRTransforms
+  MLIRTransformUtils
+  MLIRTestTransforms
+  MLIRTestTransformDialect
   MLIRTransforms
   MLIRTransformUtils
   )
