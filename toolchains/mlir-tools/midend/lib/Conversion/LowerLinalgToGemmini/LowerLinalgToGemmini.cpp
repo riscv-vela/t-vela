@@ -29,6 +29,8 @@
 
 #include "Gemmini/GemminiDialect.h"
 #include "Gemmini/GemminiOps.h"
+#include "TVela/TVelaDialect.h"
+#include "TVela/TVelaOps.h"
 using namespace mlir;
 using namespace npu;
 
@@ -228,6 +230,32 @@ public:
 private:
   std::string accType;
   bool fuseTruncation;
+};
+
+class TernaryMatmulLowering
+    : public OpRewritePattern<tvela::TernaryMatmulBufferOp> {
+public:
+  using OpRewritePattern<tvela::TernaryMatmulBufferOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(tvela::TernaryMatmulBufferOp matmulOp,
+                                PatternRewriter &rewriter) const override {
+    Location loc = matmulOp.getLoc();
+    auto outputType = cast<MemRefType>(matmulOp.getOutput().getType());
+    auto biasType =
+        MemRefType::get(outputType.getShape(), rewriter.getI32Type());
+    Value bias = rewriter.create<memref::AllocOp>(loc, biasType);
+
+    llvm::APFloat scale1(1.0f);
+    llvm::APFloat scale0(0.0f);
+    auto tileMatmulOp = rewriter.create<gemmini::TileMatMulOp>(
+        loc, matmulOp.getLhs(), matmulOp.getPackedRhs(), matmulOp.getOutput(),
+        bias, scale1, scale1, scale1, /*act=*/0, scale1, scale0);
+    tileMatmulOp->setAttr("noBias", rewriter.getBoolAttr(true));
+    tileMatmulOp->setAttr("ternary", rewriter.getBoolAttr(true));
+    rewriter.create<memref::DeallocOp>(loc, bias);
+    rewriter.eraseOp(matmulOp);
+    return success();
+  }
 };
 
 class Conv2DNchwFchwLowering
@@ -574,6 +602,7 @@ void populateLowerLinalgToGemminiConversionPatterns(RewritePatternSet &patterns,
                                                     std::string accType,
                                                     bool fuseTruncation) {
   patterns.add<MatmulLowering>(patterns.getContext(), accType, fuseTruncation);
+  patterns.add<TernaryMatmulLowering>(patterns.getContext());
   patterns.add<Conv2DNchwFchwLowering>(patterns.getContext(), accType);
   patterns.add<Conv2DNhwcHwcfLowering>(patterns.getContext(), accType);
   patterns.add<BatchMatMulOpLowering>(patterns.getContext());
@@ -612,7 +641,8 @@ public:
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<gemmini::GemminiDialect, func::FuncDialect,
                     memref::MemRefDialect, linalg::LinalgDialect,
-                    arith::ArithDialect, scf::SCFDialect>();
+                    arith::ArithDialect, scf::SCFDialect,
+                    tvela::TVelaDialect>();
   }
 };
 } // namespace
@@ -624,6 +654,7 @@ void LowerLinalgToGemminiPass::runOnOperation() {
   target.addLegalDialect<memref::MemRefDialect, gemmini::GemminiDialect,
                          arith::ArithDialect, scf::SCFDialect>();
   target.addLegalOp<linalg::FillOp, linalg::YieldOp>();
+  target.addIllegalOp<tvela::TernaryMatmulOp, tvela::TernaryMatmulBufferOp>();
   RewritePatternSet patterns(context);
   populateLowerLinalgToGemminiConversionPatterns(patterns, accType,
                                                 fuseTruncation);

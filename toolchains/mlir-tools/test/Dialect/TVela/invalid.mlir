@@ -57,3 +57,23 @@ module {
     return
   }
 }
+
+// -----
+
+module {
+  func.func @wrong_ternary_packed_shape(%lhs: tensor<1x64xi8>, %packed_rhs: tensor<64x64xi8>) -> tensor<1x64xi8> {
+    // expected-error@+1 {{requires packed_rhs to be 'tensor<64x16xi8>'}}
+    %output = tvela.ternary_matmul %lhs, %packed_rhs : tensor<1x64xi8>, tensor<64x64xi8> -> tensor<1x64xi8>
+    return %output : tensor<1x64xi8>
+  }
+}
+
+// -----
+
+module {
+  func.func @wrong_ternary_output_dtype(%lhs: tensor<1x64xi8>, %packed_rhs: tensor<64x16xi8>) -> tensor<1x64xi32> {
+    // expected-error@+1 {{requires result to be 'tensor<1x64xi8>'}}
+    %output = tvela.ternary_matmul %lhs, %packed_rhs : tensor<1x64xi8>, tensor<64x16xi8> -> tensor<1x64xi32>
+    return %output : tensor<1x64xi32>
+  }
+}

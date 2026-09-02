@@ -10,6 +10,11 @@ module {
     %output = tvela.vfrope_q15_chunk %input {m = 0 : i64, idx = 65535 : i64} : tensor<8xi16> -> tensor<8xi16>
     return %output : tensor<8xi16>
   }
+
+  func.func @ternary_matmul(%lhs: tensor<1x64xi8>, %packed_rhs: tensor<64x16xi8>) -> tensor<1x64xi8> {
+    %output = tvela.ternary_matmul %lhs, %packed_rhs : tensor<1x64xi8>, tensor<64x16xi8> -> tensor<1x64xi8>
+    return %output : tensor<1x64xi8>
+  }
 }
 
 // CHECK-LABEL: func.func @vfrope_test2
@@ -21,3 +26,6 @@ module {
 // CHECK: tvela.vfrope_q15_chunk
 // CHECK-SAME: idx = 65535 : i64
 // CHECK-SAME: m = 0 : i64
+// CHECK-LABEL: func.func @ternary_matmul
+// CHECK: tvela.ternary_matmul
+// CHECK-SAME: tensor<1x64xi8>, tensor<64x16xi8> -> tensor<1x64xi8>

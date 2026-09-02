@@ -744,7 +744,7 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
       size_t tileI, size_t tileJ, size_t tileK, int act, acc_scale_t scale,
       acc_scale_t bertScale, bool repeatingBias, bool aTranspose,
       bool bTranspose, bool fullC, bool lowD, uint8_t weightA, int dataflow,
-      bool isMpgemm, TileMatMulOp &tileMatMulOp,
+      bool noBias, bool isMpgemm, TileMatMulOp &tileMatMulOp,
       ConversionPatternRewriter &rewriter) const {
     const size_t dimIPadded = (dimI / dim + (dimI % dim != 0)) * dim;
     const size_t dimJPadded = (dimJ / dim + (dimJ % dim != 0)) * dim;
@@ -764,7 +764,6 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
     const size_t paddingI = dimIPadded - dimI;
     const size_t paddingJ = dimJPadded - dimJ;
     const size_t paddingK = dimKPadded - dimK;
-    const bool noBias = false;
     const size_t sizeofD = lowD ? sizeOfElemT : sizeOfAccT;
     const size_t sizeofC = fullC ? sizeOfAccT : sizeOfElemT;
     const size_t outputJFactor = isMpgemm ? kTernaryPacking : 1;
@@ -821,7 +820,7 @@ class GemminiTileMatMulLowering : public ConvertOpToLLVMPattern<TileMatMulOp> {
         for (size_t k0 = 0; k0 < K0; k0++) {
           Value pre;
           Location loc = A.getLoc();
-          if (k0 != 0) {
+          if (k0 != 0 || (noBias && dataflow == WEIGHT_STATIONARY)) {
             IntegerAttr preAttr = rewriter.getI64IntegerAttr(0);
             pre = rewriter.create<arith::ConstantOp>(loc, rewriter.getI64Type(),
                                                      preAttr);
@@ -1022,12 +1021,32 @@ public:
     bool bTranspose = tileMatMulOp.getBTranspose();
     bool fullC = tileMatMulOp.getFullC();
     bool lowD = tileMatMulOp.getLowD();
+    bool noBias = tileMatMulOp.getNoBias();
     uint8_t weightA = tileMatMulOp.getWeightA();
     int dataflow = tileMatMulOp.getDataflow();
     bool ternary = tileMatMulOp.getTernary();
 
-    if (ternary && cArrayShape[1] % static_cast<int64_t>(kTernaryPacking) != 0)
-      return tileMatMulOp.emitOpError() << "requires C columns to be a multiple of four when ternary=true";
+    if (ternary) {
+      if (dataflow != 1)
+        return tileMatMulOp.emitOpError()
+               << "requires weight-stationary dataflow when ternary=true";
+      if (!aArrayType.getElementType().isInteger(8) ||
+          !bArrayType.getElementType().isInteger(8) ||
+          !cArrayType.getElementType().isInteger(8) ||
+          !dArrayType.getElementType().isInteger(32))
+        return tileMatMulOp.emitOpError()
+               << "requires i8 A, packed i8 B, i8 C, and i32 D when "
+                  "ternary=true";
+      if (aArrayShape[1] != bArrayShape[0] ||
+          cArrayShape[0] != aArrayShape[0] ||
+          cArrayShape[1] !=
+              bArrayShape[1] * static_cast<int64_t>(kTernaryPacking) ||
+          dArrayShape != cArrayShape)
+        return tileMatMulOp.emitOpError()
+               << "requires A[K] == B[K], C rows == A rows, C columns == "
+                  "four times packed B columns, and D shape == C shape when "
+                  "ternary=true";
+    }
 
     size_t dimIPaded = (dimI / dim + (dimI % dim != 0)) * dim;
     size_t dimJPaded = (dimJ / dim + (dimJ % dim != 0)) * dim;
@@ -1086,7 +1105,7 @@ public:
                      strideD, strideC, aScaleFactor, bScaleFactor, dScaleFactor,
                      tileI, tileJ, tileK, act, scale, bertScale, repeatingBias,
                      aTranspose, bTranspose, fullC, lowD, weightA, dataflow,
-                     ternary, tileMatMulOp, rewriter);
+                     noBias, ternary, tileMatMulOp, rewriter);
     return success();
   };
 

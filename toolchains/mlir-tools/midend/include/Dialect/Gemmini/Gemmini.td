@@ -284,6 +284,7 @@ def TileMatMulOp : Gemmini_Op<"tile_matmul"> {
                        DefaultValuedAttr<F32Attr, "1.0">:$accScale,
                        DefaultValuedAttr<F32Attr, "0.0">:$bertScale,
                        DefaultValuedAttr<BoolAttr, "false">:$repeatingBias,
+                       DefaultValuedAttr<BoolAttr, "false">:$noBias,
                        DefaultValuedAttr<BoolAttr, "false">:$aTranspose,
                        DefaultValuedAttr<BoolAttr, "false">:$bTranspose,
                        DefaultValuedAttr<BoolAttr, "false">:$fullC,
