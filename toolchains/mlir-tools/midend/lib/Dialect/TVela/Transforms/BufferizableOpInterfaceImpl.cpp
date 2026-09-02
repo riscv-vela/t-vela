@@ -85,11 +85,79 @@ struct VFRopeQ15ChunkOpInterface
   }
 };
 
+struct TernaryMatmulOpInterface
+    : public BufferizableOpInterface::ExternalModel<TernaryMatmulOpInterface,
+                                                    TernaryMatmulOp> {
+  bool bufferizesToAllocation(Operation *op, Value value) const { return true; }
+
+  bool bufferizesToMemoryRead(Operation *op, OpOperand &opOperand,
+                              const AnalysisState &state) const {
+    return true;
+  }
+
+  bool bufferizesToMemoryWrite(Operation *op, OpOperand &opOperand,
+                               const AnalysisState &state) const {
+    return false;
+  }
+
+  AliasingValueList getAliasingValues(Operation *op, OpOperand &opOperand,
+                                      const AnalysisState &state) const {
+    return {};
+  }
+
+  AliasingOpOperandList
+  getAliasingOpOperands(Operation *op, Value value,
+                        const AnalysisState &state) const {
+    return {};
+  }
+
+  FailureOr<BaseMemRefType>
+  getBufferType(Operation *op, Value value, const BufferizationOptions &options,
+                SmallVector<Value> &invocationStack) const {
+    auto matmulOp = cast<TernaryMatmulOp>(op);
+    auto lhsType = bufferization::getBufferType(matmulOp.getLhs(), options,
+                                                invocationStack);
+    if (failed(lhsType))
+      return failure();
+    auto resultType = cast<RankedTensorType>(matmulOp.getResult().getType());
+    return MemRefType::get(resultType.getShape(), resultType.getElementType(),
+                           MemRefLayoutAttrInterface(),
+                           lhsType->getMemorySpace());
+  }
+
+  LogicalResult bufferize(Operation *op, RewriterBase &rewriter,
+                          const BufferizationOptions &options) const {
+    auto matmulOp = cast<TernaryMatmulOp>(op);
+    FailureOr<Value> lhsBuffer =
+        getBuffer(rewriter, matmulOp.getLhs(), options);
+    FailureOr<Value> packedRhsBuffer =
+        getBuffer(rewriter, matmulOp.getPackedRhs(), options);
+    if (failed(lhsBuffer) || failed(packedRhsBuffer))
+      return failure();
+
+    auto lhsType = cast<MemRefType>(lhsBuffer->getType());
+    auto resultType = cast<RankedTensorType>(matmulOp.getResult().getType());
+    auto outputType =
+        MemRefType::get(resultType.getShape(), resultType.getElementType(),
+                        MemRefLayoutAttrInterface(), lhsType.getMemorySpace());
+    FailureOr<Value> outputBuffer = options.createAlloc(
+        rewriter, matmulOp.getLoc(), outputType, ValueRange());
+    if (failed(outputBuffer))
+      return failure();
+
+    rewriter.create<TernaryMatmulBufferOp>(matmulOp.getLoc(), *lhsBuffer,
+                                           *packedRhsBuffer, *outputBuffer);
+    replaceOpWithBufferizedValues(rewriter, op, *outputBuffer);
+    return success();
+  }
+};
+
 } // namespace
 
 void npu::tvela::registerBufferizableOpInterfaceExternalModels(
     DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *ctx, TVelaDialect *dialect) {
     VFRopeQ15ChunkOp::attachInterface<VFRopeQ15ChunkOpInterface>(*ctx);
+    TernaryMatmulOp::attachInterface<TernaryMatmulOpInterface>(*ctx);
   });
 }

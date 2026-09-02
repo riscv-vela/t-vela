@@ -12,7 +12,7 @@ deps_dir="${script_dir}/.deps"
 source_dir="${deps_dir}/torch-mlir"
 venv_dir="${deps_dir}/venv"
 build_dir="${script_dir}/build"
-torch_mlir_patch="${script_dir}/patches/0001-preserve-tvela-vfrope-in-linalg.patch"
+torch_mlir_patch="${script_dir}/patches/0001-preserve-tvela-ops-in-linalg.patch"
 
 if ! command -v "${python_bin}" >/dev/null 2>&1; then
   echo "error: ${python_bin} is required" >&2
@@ -29,7 +29,7 @@ git -C "${source_dir}" fetch --depth=1 origin "${TORCH_MLIR_COMMIT}"
 git -C "${source_dir}" checkout --detach FETCH_HEAD
 git -C "${source_dir}" reset --hard FETCH_HEAD
 git -C "${source_dir}" clean -f -- \
-  lib/Dialect/TorchConversion/Transforms/ConvertTVelaVFRope.cpp
+  lib/Dialect/TorchConversion/Transforms/ConvertTVelaOps.cpp
 git -C "${source_dir}" submodule update --init --depth=1 externals/llvm-project
 
 actual_llvm_commit="$(git -C "${source_dir}/externals/llvm-project" rev-parse HEAD)"
@@ -139,7 +139,7 @@ fi
   --target TorchMLIRPythonModules \
   -j "${jobs}"
 
-touch "${build_dir}/.tvela-vfrope-linalg-ready"
+touch "${build_dir}/.tvela-fvela-linalg-ready"
 
 echo "Frontend Python: ${venv_dir}/bin/python"
 echo "Torch MLIR Python path: ${build_dir}/tools/torch-mlir/python_packages/torch_mlir"

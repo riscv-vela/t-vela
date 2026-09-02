@@ -2,7 +2,7 @@ SELF_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 MLIR_TOOLS_DIR := $(abspath $(SELF_DIR)/../..)
 REPO_ROOT := $(abspath $(MLIR_TOOLS_DIR)/../..)
 
-.DEFAULT_GOAL := saturn-vfrope-test2-compile
+.DEFAULT_GOAL := fvela-npu-ternary-compile
 
 NPU_BIN ?= $(MLIR_TOOLS_DIR)/build/bin
 NPU_OPT := $(NPU_BIN)/npu-opt
@@ -23,54 +23,49 @@ READELF := $(RISCV_BIN)/$(RISCV_PREFIX)readelf
 NM := $(RISCV_BIN)/$(RISCV_PREFIX)nm
 
 BUILD_DIR := $(SELF_DIR)/build
-LINALG_MLIR := $(BUILD_DIR)/vfrope_test2_linalg.mlir
-LOWERED_MLIR := $(BUILD_DIR)/vfrope_test2_llvm.mlir
-LLVM_IR := $(BUILD_DIR)/vfrope_test2.ll
-MLIR_OBJECT := $(BUILD_DIR)/vfrope_test2_mlir.o
-RUNTIME_OBJECT := $(BUILD_DIR)/vfrope_runtime.o
-ELF := $(BUILD_DIR)/vfrope_test2.elf
+LINALG_MLIR := $(BUILD_DIR)/ternary_matmul_linalg.mlir
+LOWERED_MLIR := $(BUILD_DIR)/ternary_matmul_llvm.mlir
+LLVM_IR := $(BUILD_DIR)/ternary_matmul.ll
+OBJECT := $(BUILD_DIR)/ternary_matmul.o
+ELF := $(BUILD_DIR)/ternary_matmul.elf
 
-ARCH_FLAGS := -march=rv64gcv -mabi=lp64d -mcmodel=medany
-ASFLAGS := $(ARCH_FLAGS)
+ARCH_FLAGS := -march=rv64gc -mabi=lp64d -mcmodel=medany
 LDFLAGS := $(ARCH_FLAGS) -static -specs=htif_nano.specs
-LLVM_FEATURES := +v,+m,+a,+f,+d,+c,+zicsr,+zifencei
+LLVM_FEATURES := +npuext,+m,+a,+f,+d,+c,+zicsr,+zifencei
 
-.PHONY: saturn-vfrope-test2-frontend-setup \
-	saturn-vfrope-test2-export \
-	saturn-vfrope-test2-lower \
-	saturn-vfrope-test2-translate \
-	saturn-vfrope-test2-compile \
-	saturn-vfrope-test2-check \
-	saturn-vfrope-test2 \
+.PHONY: fvela-npu-ternary-frontend-setup \
+	fvela-npu-ternary-export \
+	fvela-npu-ternary-lower \
+	fvela-npu-ternary-translate \
+	fvela-npu-ternary-compile \
+	fvela-npu-ternary-check \
 	frontend-setup \
 	all \
 	check \
 	clean
 
-all: saturn-vfrope-test2-compile
+all: fvela-npu-ternary-compile
 
-saturn-vfrope-test2: saturn-vfrope-test2-compile
+frontend-setup: fvela-npu-ternary-frontend-setup
 
-frontend-setup: saturn-vfrope-test2-frontend-setup
+check: fvela-npu-ternary-check
 
-check: saturn-vfrope-test2-check
+fvela-npu-ternary-frontend-setup: $(FRONTEND_READY)
 
-saturn-vfrope-test2-frontend-setup: $(FRONTEND_READY)
+fvela-npu-ternary-export: $(LINALG_MLIR)
 
-saturn-vfrope-test2-export: $(LINALG_MLIR)
+fvela-npu-ternary-lower: $(LOWERED_MLIR)
 
-saturn-vfrope-test2-lower: $(LOWERED_MLIR)
+fvela-npu-ternary-translate: $(LLVM_IR)
 
-saturn-vfrope-test2-translate: $(LLVM_IR)
-
-saturn-vfrope-test2-compile: $(ELF)
+fvela-npu-ternary-compile: $(ELF)
 
 $(FRONTEND_READY): $(TORCH_FRONTEND_DIR)/setup.sh \
 		$(TORCH_FRONTEND_DIR)/versions.lock \
 		$(TORCH_FRONTEND_DIR)/patches/0001-preserve-tvela-ops-in-linalg.patch
 	$(TORCH_FRONTEND_DIR)/setup.sh
 
-$(LINALG_MLIR): vfrope_test2.py $(FRONTEND_READY) | $(BUILD_DIR)
+$(LINALG_MLIR): ternary_matmul.py $(FRONTEND_READY) | $(BUILD_DIR)
 	PYTHONPATH=$(TORCH_MLIR_PYTHONPATH) \
 		$(FRONTEND_PYTHON) $< --output $@
 
@@ -79,8 +74,9 @@ $(LOWERED_MLIR): $(LINALG_MLIR) | $(BUILD_DIR)
 		--one-shot-bufferize='bufferize-function-boundaries function-boundary-type-conversion=identity-layout-map' \
 		--buffer-results-to-out-params \
 		--buffer-deallocation-pipeline \
-		--lower-tvela-to-fvela-runtime \
+		--convert-linalg-to-gemmini \
 		--convert-linalg-to-loops \
+		--lower-gemmini='dim=16 addr_len=32 acc_rows=1024 bank_rows=4096 elem_t=i8 acc_t=i32' \
 		--lower-affine \
 		--convert-scf-to-cf \
 		--expand-strided-metadata \
@@ -95,7 +91,7 @@ $(LOWERED_MLIR): $(LINALG_MLIR) | $(BUILD_DIR)
 $(LLVM_IR): $(LOWERED_MLIR)
 	$(NPU_TRANSLATE) $< --npu-to-llvmir -o $@
 
-$(MLIR_OBJECT): $(LLVM_IR)
+$(OBJECT): $(LLVM_IR)
 	$(NPU_LLC) $< \
 		-filetype=obj \
 		-mtriple=riscv64 \
@@ -104,38 +100,28 @@ $(MLIR_OBJECT): $(LLVM_IR)
 		-float-abi=hard \
 		-o $@
 
-$(RUNTIME_OBJECT): vfrope_runtime.S | $(BUILD_DIR)
-	$(CC) $(ASFLAGS) -c $< -o $@
-
-$(ELF): $(MLIR_OBJECT) $(RUNTIME_OBJECT)
+$(ELF): $(OBJECT)
 	$(CC) $(LDFLAGS) $^ -o $@
 
 $(BUILD_DIR):
 	mkdir -p $@
 
-saturn-vfrope-test2-check: saturn-vfrope-test2-compile
+fvela-npu-ternary-check: fvela-npu-ternary-compile
 	PYTHONPATH=$(TORCH_MLIR_PYTHONPATH) \
-		$(FRONTEND_PYTHON) $(TORCH_FRONTEND_DIR)/test/test_vfrope_linalg.py
-	test "$$(grep -c 'tvela.vfrope_q15_chunk' $(LINALG_MLIR))" -eq 1
-	test "$$(grep -c 'arith.constant dense<' $(LINALG_MLIR))" -eq 2
+		$(FRONTEND_PYTHON) $(TORCH_FRONTEND_DIR)/test/test_ternary_matmul_linalg.py
+	test "$$(grep -c 'tvela.ternary_matmul' $(LINALG_MLIR))" -eq 1
+	test "$$(grep -c 'arith.constant dense<' $(LINALG_MLIR))" -eq 3
 	grep -q 'func.func @main() -> i32' $(LINALG_MLIR)
-	grep -q 'func.func @vfrope_self_test' $(LINALG_MLIR)
+	grep -q 'func.func @ternary_matmul_self_test' $(LINALG_MLIR)
 	! grep -q 'torch\.' $(LINALG_MLIR)
-	! grep -q 'dense_resource' $(LINALG_MLIR)
-	! grep -q 'llvm.emit_c_interface' $(LINALG_MLIR)
 	! grep -q 'tvela\.' $(LOWERED_MLIR)
+	! grep -q 'gemmini\.tile_matmul' $(LOWERED_MLIR)
 	! grep -q 'linalg\.' $(LOWERED_MLIR)
+	grep -q '@llvm.riscv.loop.ws(i64 1048576, i64 0)' $(LLVM_IR)
 	$(READELF) -h $(ELF) | grep -q 'Machine:.*RISC-V'
 	$(NM) $(ELF) | grep -Eq '[[:space:]]T main$$'
-	$(NM) $(ELF) | grep -Eq '[[:space:]]T vfrope_self_test$$'
-	$(NM) $(ELF) | grep -Eq '[[:space:]]T fvela_rope_runtime$$'
-	! $(NM) $(ELF) | grep -q '_mlir_ciface'
-	$(OBJDUMP) -s -j .rodata $(ELF) | grep -qi '00200040 0060ff7f 00e000c0 00a00080'
-	$(OBJDUMP) -s -j .rodata $(ELF) | grep -qi '05b94af6 077e7e63 94be1b1d 5196cc77'
-	$(OBJDUMP) -d $(ELF) | grep -Eq 'vsetvli|vsetivli'
-	$(OBJDUMP) -d $(ELF) | grep -q 'vle16.v'
-	$(OBJDUMP) -d $(ELF) | grep -qi '4a21c1d7'
-	$(OBJDUMP) -d $(ELF) | grep -q 'vse16.v'
+	$(NM) $(ELF) | grep -Eq '[[:space:]]T ternary_matmul_self_test$$'
+	$(OBJDUMP) -d $(ELF) | grep -qi '1005b07b'
 	@echo "Verified $(ELF)"
 
 clean:

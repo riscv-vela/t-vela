@@ -52,4 +52,30 @@ def VFRopeQ15ChunkBufferOp : TVela_Op<"vfrope_q15_chunk_buffer"> {
   let hasVerifier = 1;
 }
 
+def TernaryMatmulOp : TVela_Op<"ternary_matmul", [Pure]> {
+  let summary = "Multiply int8 activations by packed ternary weights";
+  let description = [{
+    Multiplies a tensor<1x64xi8> activation row by tensor<64x16xi8>
+    weights. Each packed weight byte contains four signed 2-bit values and
+    produces four adjacent int8 result columns. The result is saturated to
+    the int8 range during the Gemmini move-out.
+  }];
+
+  let arguments = (ins AnyRankedTensor:$lhs,
+                       AnyRankedTensor:$packedRhs);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = "$lhs `,` $packedRhs attr-dict `:` type($lhs) `,` type($packedRhs) `->` type($result)";
+  let hasVerifier = 1;
+}
+
+def TernaryMatmulBufferOp : TVela_Op<"ternary_matmul_buffer"> {
+  let summary = "Buffer form of the F-Vela ternary matmul";
+  let arguments = (ins
+      Arg<AnyMemRef, "", [MemReadAt<0, FullEffect>]>:$lhs,
+      Arg<AnyMemRef, "", [MemReadAt<1, FullEffect>]>:$packedRhs,
+      Arg<AnyMemRef, "", [MemWriteAt<0, FullEffect>]>:$output);
+  let assemblyFormat = "$lhs `,` $packedRhs `,` $output attr-dict `:` type($lhs) `,` type($packedRhs) `,` type($output)";
+  let hasVerifier = 1;
+}
+
 #endif // TVELA_OPS

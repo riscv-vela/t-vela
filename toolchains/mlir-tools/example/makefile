@@ -3,6 +3,7 @@ npu_OPT := ../build/bin/npu-opt
 npu_TRANSLATE := ../build/bin/npu-translate
 npu_LLC := ../build/bin/npu-llc
 INTERFACES:= ../midend/Interfaces
+BENCH_COMMON := ../../../generators/gemmini/software/gemmini-rocc-tests/riscv-tests/benchmarks/common
 
 mvin-mvout-lower:
 	@${npu_OPT} ./mvin-mvout.mlir \
@@ -227,6 +228,26 @@ tile-matmul-run:
 		-o log.o
 	@riscv64-unknown-linux-gnu-gcc log.o -O2 -static -o a.out
 	@spike --extension=gemmini pk a.out
+
+tile-matmul-ternary:
+	@${npu_OPT} ./tile-matmul-ternary.mlir \
+		-promote-buffers-to-stack \
+		-lower-gemmini="dim=16 addr_len=32 acc_rows=1024 bank_rows=4096 elem_t=i8 acc_t=i32" | \
+	${npu_TRANSLATE} --npu-to-llvmir | \
+	${npu_LLC} -filetype=obj -mtriple=riscv64 \
+		-mattr=+npuext,+D -float-abi=hard -relocation-model=pic \
+		-o log.o
+	@riscv64-unknown-elf-gcc log.o \
+		${BENCH_COMMON}/syscalls.c \
+		${BENCH_COMMON}/crt.S \
+		-mcmodel=medany -march=rv64gc -Wa,-march=rv64gc \
+		-O2 -fno-common -fno-builtin-printf \
+		-fno-tree-loop-distribute-patterns \
+		-nostdlib -nostartfiles -static \
+		-T ${BENCH_COMMON}/test.ld \
+		-I${BENCH_COMMON} -I${BENCH_COMMON}/../../env \
+		-lgcc \
+		-o tvela-fvela-mpgemm-baremetal.elf
 
 tile-matmul-os-lower:
 	@${npu_OPT} ./tile-matmul-os.mlir \
